@@ -6,7 +6,7 @@
 
 | Skill | Description |
 |-------|-------------|
-| [sixtyfour](./skills/sixtyfour) | Find people, enrich contacts, research companies, build prospect lists, and run data enrichment workflows via the Sixtyfour API. |
+| [sixtyfour](./skills/sixtyfour) | People and company intelligence — investigate any person or company, resolve identities, map relationships, and surface signals via the Sixtyfour API. |
 
 ## Installation
 
@@ -28,14 +28,6 @@ git clone https://github.com/sixtyfour-ai/skills.git /path/to/sixtyfour-skills
 ln -s /path/to/sixtyfour-skills/skills/sixtyfour .claude/skills/sixtyfour
 ```
 
-### Cursor
-
-Install as a [Cursor plugin](https://cursor.com/docs/plugins):
-
-```
-/add-plugin sixtyfour
-```
-
 ### Manual
 
 Copy the `skills/sixtyfour` directory into your agent's skills directory.
@@ -54,12 +46,11 @@ export SIXTYFOUR_API_KEY=your_key_here
 
 Once installed, your agent can:
 
-- **Find emails and phones** — "Find the email for Sarah Chen at Figma"
-- **Enrich people** — "What's Jane Doe's title, LinkedIn, and years of experience at Acme Corp?"
-- **Research companies** — "Tell me about Ramp — revenue, headcount, funding, engineering leadership"
+- **Investigate people** — "Tell me everything about Jane Doe at Acme Corp — title, background, LinkedIn, career trajectory"
+- **Research companies** — "Research Ramp — revenue, headcount, funding, engineering leadership"
 - **Search at scale** — "Find 500 VPs of Sales at Series B SaaS startups in NYC"
-- **Build workflows** — "Search for AI startups, find their CTOs, get emails, and export to CSV"
-- **Reverse lookups** — "Who owns the email cto@startup.io?"
+- **Build pipelines** — "Search for AI startups, find their CTOs, get contact info, and export to CSV"
+- **Due diligence** — "Deep investigation on this person for compliance review" (medium/high tier)
 
 ## Documentation
 
