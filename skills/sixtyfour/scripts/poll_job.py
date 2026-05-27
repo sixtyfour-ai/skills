@@ -36,8 +36,12 @@ def _request(method, path, api_key, base_url):
         return {"_http_error": e.code, "_detail": body}
 
 
-def _download(url, path):
-    urllib.request.urlretrieve(url, path)
+def _download(url, path, api_key=None):
+    req = urllib.request.Request(url)
+    if api_key:
+        req.add_header("x-api-key", api_key)
+    with urllib.request.urlopen(req) as resp, open(path, "wb") as f:
+        f.write(resp.read())
 
 
 def _log(data):
@@ -67,7 +71,7 @@ def poll_search(task_id, api_key, base_url, timeout, output, interval):
                 dl = _request("GET", f"/search/download?resource_handle_id={rhid}", api_key, base_url)
                 signed_url = dl.get("url")
                 if signed_url:
-                    _download(signed_url, output)
+                    _download(signed_url, output, api_key)
                     _log({"result": "downloaded", "path": output, "total_results": resp.get("total_results")})
             else:
                 _log({"result": "completed", "total_results": resp.get("total_results")})
@@ -108,7 +112,7 @@ def poll_workflow(run_id, api_key, base_url, timeout, output, interval):
                 if isinstance(links, list):
                     for i, link in enumerate(links):
                         path = output if i == 0 else f"{output}.part{i}"
-                        _download(link["download_url"], path)
+                        _download(link["download_url"], path, api_key)
                         _log({"result": "downloaded", "path": path, "rows": link.get("row_count"), "filename": link.get("filename")})
                 else:
                     _log({"result": "completed", "note": "no download links available"})
