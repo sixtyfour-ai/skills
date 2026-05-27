@@ -1,0 +1,24 @@
+{
+  "name": "sixtyfour",
+  "displayName": "Sixtyfour",
+  "version": "1.0.0",
+  "description": "Skills for working with Sixtyfour — people and company intelligence at scale via AI research agents.",
+  "author": {
+    "name": "Sixtyfour AI",
+    "email": "support@sixtyfour.ai"
+  },
+  "homepage": "https://sixtyfour.ai",
+  "repository": "https://github.com/sixtyfour-ai/skills",
+  "license": "MIT",
+  "keywords": [
+    "sixtyfour",
+    "people-intelligence",
+    "company-intelligence",
+    "enrichment",
+    "prospecting",
+    "data-enrichment",
+    "lead-generation"
+  ],
+  "category": "developer-tools",
+  "skills": "./skills/"
+}
