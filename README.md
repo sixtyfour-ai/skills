@@ -58,6 +58,28 @@ Once installed, your agent can:
 - [API Quick Start](https://docs.sixtyfour.ai/api-quick-start)
 - [Skills Guide](https://docs.sixtyfour.ai/developer-tools/skills)
 
+## Development
+
+### Versioning
+
+Both Claude Code and Cursor use semantic versioning in the manifest files — not git tags. Bump the version in all three manifest files before pushing:
+
+- `.claude-plugin/plugin.json`
+- `.claude-plugin/marketplace.json`
+- `.cursor-plugin/plugin.json`
+
+Git tags are optional — useful for tracking releases on GitHub but not required by either platform.
+
+### Updating
+
+**Claude Code** — version-based, no manual review. Push to `main` and users run:
+```bash
+claude plugin update sixtyfour@sixtyfour-skills
+```
+A restart is required to apply the update.
+
+**Cursor** — updates go through manual marketplace review before publishing. Cursor caches installed versions locally, so users generally need to uninstall and reinstall the plugin via the in-app marketplace to get the latest version.
+
 ## Feedback
 
 Something not working? [Open an issue](https://github.com/sixtyfour-ai/skills/issues).
