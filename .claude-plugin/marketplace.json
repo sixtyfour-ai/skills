@@ -14,8 +14,6 @@
       "name": "sixtyfour",
       "description": "People and company intelligence — investigate any person or company, resolve identities, map relationships, and surface signals via the Sixtyfour API.",
       "source": "./",
-      "strict": false,
-      "skills": ["./skills/sixtyfour"],
       "category": "data",
       "keywords": [
         "sixtyfour",
