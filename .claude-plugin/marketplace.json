@@ -7,13 +7,14 @@
   },
   "metadata": {
     "description": "Sixtyfour skills for AI coding assistants — people and company intelligence at scale.",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "plugins": [
     {
       "name": "sixtyfour",
       "description": "People and company intelligence — investigate any person or company, resolve identities, map relationships, and surface signals via the Sixtyfour API.",
       "source": "./",
+      "strict": true,
       "category": "data",
       "keywords": [
         "sixtyfour",
