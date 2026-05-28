@@ -83,8 +83,3 @@ A restart is required to apply the update.
 ## Feedback
 
 Something not working? [Open an issue](https://github.com/sixtyfour-ai/skills/issues).
-
-
-## Feedback
-
-Something not working? [Open an issue](https://github.com/sixtyfour-ai/skills/issues).
