@@ -185,5 +185,5 @@ Always check the docs before guessing about an endpoint's parameters or behavior
 
 ### MCP servers (for IDE integration)
 
-- Documentation MCP: `https://docs.sixtyfour.ai/mcp`
-- Filter Search MCP: `https://mcp.sixtyfour.ai/mcp?api_key=YOUR_API_KEY`
+- Sixtyfour Documentation MCP: `https://docs.sixtyfour.ai/mcp`
+- Sixtyfour Intelligence MCP: `https://mcp.sixtyfour.ai/mcp?api_key=YOUR_API_KEY`
