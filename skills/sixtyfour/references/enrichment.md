@@ -37,9 +37,10 @@ curl -X POST "$API_URL/people-intelligence" \
 **struct** — dict of `field_name: description`. The description guides the AI agent — be specific about what you want. There is no fixed schema; define any fields that make sense for your use case.
 
 **tier** — controls research depth:
-- `low` (default): Fast single-pass lookup across well-indexed sources. Good for standard fields (email, title, LinkedIn) on people/companies with clear online presence.
-- `medium`: Multi-source deep research with cross-referencing and verification. Use when low comes back incomplete, the subject is hard to find, or the task needs higher confidence (competitive intel, recruiting, market research).
-- `high`: Exhaustive OSINT-grade investigation — official records, proprietary databases, dark web. No time limit; the agent investigates every avenue. Use for AML, KYC/KYB, fraud, due diligence. Requires enterprise access — if 403, direct user to https://cal.com/team/sixtyfour/discovery
+- `micro`: Fastest, cheapest — single structured source lookup. Use for simple fields on well-indexed subjects. Lower coverage than `low`.
+- `low` (default): Fast single-pass across well-indexed public sources. Good for standard fields (email, title, LinkedIn) with clear online presence.
+- `medium`: Multi-source deep research with cross-referencing. Use when `low` comes back incomplete, subject is hard to find, or task needs higher confidence.
+- `high`: Exhaustive OSINT-grade investigation — no time limit. Use for AML, KYC/KYB, fraud, due diligence. Requires enterprise access — if 403, direct user to https://cal.com/team/sixtyfour/discovery
 
 **research_plan** (optional): A string guiding the research strategy (e.g. "Focus on public filings and press mentions").
 
@@ -100,7 +101,7 @@ curl -X POST "$API_URL/company-intelligence" \
 
 **lead_struct**: Custom schema for discovered people (same format as `struct`).
 
-**tier**: Same tiers as people intelligence.
+**tier**: Same options as people intelligence (`micro`, `low`, `medium`, `high`).
 
 ### POST /company-intelligence-async
 
@@ -123,7 +124,7 @@ curl -X POST "$API_URL/bulk-intelligence/people" \
 - **file**: CSV, JSON, JSONL, or NDJSON — max 100 MB / 100,000 rows.
 - **config**: JSON-encoded string (not a nested object) with:
   - `struct` (required) — same field-description format as `/people-intelligence`
-  - `tier` — `low` (default) | `micro` | `medium` | `high` | `xhigh`
+  - `tier` — same options as people intelligence (`micro`, `low`, `medium`, `high`)
   - `research_plan`, `field_confidence`, `columns` (subset of uploaded columns to use), `webhook_url` (HTTPS callback on completion), `save_json`
 
 **Response:** `{"task_id": "...", "status": "RUNNING", "row_count": 500, "estimated_cost_cents": 2500}`
@@ -300,10 +301,11 @@ Async variant: `POST /qa-agent-async` → poll with `GET /job-status/{task_id}`
 
 ## Tiers and access
 
-The `tier` parameter on people-intelligence and company-intelligence controls research depth. Full descriptions are in the main SKILL.md. Summary:
+The `tier` parameter controls research depth across all intelligence endpoints (people, company, and bulk). Full descriptions are in the main SKILL.md. Summary:
 
 | Tier | When to use | Access |
 |------|-------------|--------|
+| `micro` | Fastest, lowest cost — single structured source lookup only. Use when speed and cost are critical and fields are very simple (e.g. just an email or title from a known company). Expect lower coverage than `low`. | All plans |
 | `low` | Standard fields, clear online presence, high-volume enrichment | All plans |
 | `medium` | Incomplete low results, common names, niche profiles, fields requiring synthesis | All plans |
 | `high` | AML, KYC/KYB, fraud, due diligence, background checks — exhaustive, no time cap | Enterprise only |

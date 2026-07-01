@@ -76,7 +76,7 @@ curl -X POST "$API_URL/people-intelligence" \
 
 The `struct` field is fully flexible — define any fields you need and the agent finds them. Email, phone, social profiles, career history, skills, salary estimates, publications, anything a human researcher could find.
 
-Add `"tier": "low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
+Add `"tier": "micro"`, `"low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
 
 ### Company intelligence
 
@@ -151,6 +151,8 @@ Save a reusable list of people/companies to suppress from results (e.g. existing
 ## Research tiers
 
 People intelligence and company intelligence accept a `tier` parameter that controls how deep the AI agents research:
+
+**`micro`** — Single structured source lookup only. Fastest and cheapest — best when you need a simple field (email, title) from someone with a clear, well-indexed online presence and coverage gaps are acceptable. Expect lower hit rate than `low`.
 
 **`low`** (default) — Fast, single-pass lookup. The agent checks well-indexed public sources (LinkedIn, company websites, professional directories) and returns what it finds on the first pass. Best for standard fields on subjects with a clear online presence — title, LinkedIn, company basics, professional background. The right default for high-volume work where speed and cost matter.
 
