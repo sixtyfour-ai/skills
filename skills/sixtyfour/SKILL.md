@@ -99,6 +99,10 @@ curl -X POST "$API_URL/company-intelligence" \
 
 Set `find_people: true` to discover key people at the company. Use `people_focus_prompt` to filter by role.
 
+### Bulk intelligence (file upload)
+
+For running people/company intelligence across 100+ records in one call (no workflow needed), upload a CSV/JSON/NDJSON file to `POST /bulk-intelligence/people` or `POST /bulk-intelligence/company` and poll the returned `task_id` like any async job. See [references/enrichment.md](references/enrichment.md).
+
 ## Utilities
 
 These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point.
@@ -109,7 +113,10 @@ These endpoints handle specific, common tasks. They're faster and cheaper than f
 | Find someone's phone | `POST /find-phone` |
 | Identify who owns an email | `POST /reverse-email` |
 | Identify who owns a phone number | `POST /reverse-phone` |
+| Enrich a LinkedIn profile URL | `POST /enrich-linkedin` |
 | Evaluate data against criteria | `POST /qa-agent` |
+| Auto-generate `struct` fields from a description | `POST /struct-builder/generate` |
+| Check credit balance | `GET /check-balance` |
 
 For detailed parameters and bulk/async variants, see [references/enrichment.md](references/enrichment.md).
 
@@ -135,7 +142,11 @@ python3 scripts/poll_job.py search TASK_ID --output /tmp/results.csv
 
 ### Filter search (structured)
 
-For precise queries with field-level filters. See [references/search.md](references/search.md).
+For precise queries with field-level filters, use `POST /search/query` (synchronous, cursor-paginated — the current recommended endpoint, replacing the older `/search/start-filter-search`). See [references/search.md](references/search.md).
+
+### Exclusion lists
+
+Save a reusable list of people/companies to suppress from results (e.g. existing customers) via `POST /search/exclusion-lists`, then apply it to any search with `exclude_list_ids`. See [references/search.md](references/search.md).
 
 ## Research tiers
 
