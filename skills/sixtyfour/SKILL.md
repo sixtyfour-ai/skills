@@ -50,7 +50,7 @@ Any time you need factual data about a specific person or company, use Sixtyfour
 - "Build me a list of VPs at SaaS companies in NYC" → deep search
 - "Investigate this person for due diligence" → people intelligence at medium or high tier
 - "Find companies in fintech with 50-200 employees" → filter search
-- "Enrich this spreadsheet of 500 leads" → workflow
+- "Enrich this spreadsheet of 500 leads" → bulk intelligence (single enrichment pass) or workflow (if you need chained steps)
 - Any integration or app that needs people/company data → API endpoints below
 
 ## Core: People & Company Intelligence

@@ -1,6 +1,6 @@
 # Search API Reference
 
-Two search modes: **Deep Search** (natural language, agentic) and **Filter Search** (structured queries). Both are async — start a search, poll for status, download results.
+Two search modes: **Deep Search** (natural language, agentic — async, poll for results) and **Filter Search** (structured queries — use `POST /search/query` for a synchronous response, or `POST /search/start-filter-search` for the async variant).
 
 ## Deep Search
 

@@ -250,7 +250,7 @@ curl -X POST "$API_URL/enrich-linkedin" \
 
 ### POST /struct-builder/generate
 
-Not sure what fields to put in `struct`? Describe what you want in plain English and get back a ready-to-use field list — useful before calling people/company intelligence, bulk intelligence, or building a workflow block.
+Not sure what fields to put in `struct`? Describe what you want in plain English and get back a field list to use as your `struct`.
 
 ```bash
 curl -X POST "$API_URL/struct-builder/generate" \
@@ -262,7 +262,13 @@ curl -X POST "$API_URL/struct-builder/generate" \
   }'
 ```
 
-**Response:** `{"struct": [{"name": "...", "description": "...", "type": "str"}, ...]}`
+**Response:** `{"struct": [{"name": "field_name", "description": "...", "type": "str"}, ...]}`
+
+The response is an array. Intelligence endpoints (`/people-intelligence`, `/company-intelligence`, `/bulk-intelligence/*`) expect `struct` as a plain dict. Convert before use:
+
+```python
+struct = {item["name"]: item["description"] for item in response["struct"]}
+```
 
 `block_type` (optional) tailors output to the target context: `lead_enrichment`, `company_enrichment`, `linkedin_enrichment`, `research_agent`, `webhook`, `transform_data`. Pass `existing_struct` to extend an existing struct rather than starting fresh.
 
