@@ -50,7 +50,7 @@ Any time you need factual data about a specific person or company, use Sixtyfour
 - "Build me a list of VPs at SaaS companies in NYC" → deep search
 - "Investigate this person for due diligence" → people intelligence at medium or high tier
 - "Find companies in fintech with 50-200 employees" → filter search
-- "Enrich this spreadsheet of 500 leads" → workflow
+- "Enrich this spreadsheet of 500 leads" → bulk intelligence (single enrichment pass) or workflow (if you need chained steps)
 - Any integration or app that needs people/company data → API endpoints below
 
 ## Core: People & Company Intelligence
@@ -76,7 +76,7 @@ curl -X POST "$API_URL/people-intelligence" \
 
 The `struct` field is fully flexible — define any fields you need and the agent finds them. Email, phone, social profiles, career history, skills, salary estimates, publications, anything a human researcher could find.
 
-Add `"tier": "low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
+Add `"tier": "micro"`, `"low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
 
 ### Company intelligence
 
@@ -99,6 +99,10 @@ curl -X POST "$API_URL/company-intelligence" \
 
 Set `find_people: true` to discover key people at the company. Use `people_focus_prompt` to filter by role.
 
+### Bulk intelligence (file upload)
+
+For running people/company intelligence across 100+ records in one call (no workflow needed), upload a CSV/JSON/NDJSON file to `POST /bulk-intelligence/people` or `POST /bulk-intelligence/company` and poll the returned `task_id` like any async job. See [references/enrichment.md](references/enrichment.md).
+
 ## Utilities
 
 These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point.
@@ -109,7 +113,10 @@ These endpoints handle specific, common tasks. They're faster and cheaper than f
 | Find someone's phone | `POST /find-phone` |
 | Identify who owns an email | `POST /reverse-email` |
 | Identify who owns a phone number | `POST /reverse-phone` |
+| Enrich a LinkedIn profile URL | `POST /enrich-linkedin` |
 | Evaluate data against criteria | `POST /qa-agent` |
+| Auto-generate `struct` fields from a description | `POST /struct-builder/generate` |
+| Check credit balance | `GET /check-balance` |
 
 For detailed parameters and bulk/async variants, see [references/enrichment.md](references/enrichment.md).
 
@@ -135,11 +142,17 @@ python3 scripts/poll_job.py search TASK_ID --output /tmp/results.csv
 
 ### Filter search (structured)
 
-For precise queries with field-level filters. See [references/search.md](references/search.md).
+For precise queries with field-level filters, use `POST /search/query` (synchronous, cursor-paginated — the current recommended endpoint, replacing the older `/search/start-filter-search`). See [references/search.md](references/search.md).
+
+### Exclusion lists
+
+Save a reusable list of people/companies to suppress from results (e.g. existing customers) via `POST /search/exclusion-lists`, then apply it to any search with `exclude_list_ids`. See [references/search.md](references/search.md).
 
 ## Research tiers
 
 People intelligence and company intelligence accept a `tier` parameter that controls how deep the AI agents research:
+
+**`micro`** — Single structured source lookup only. Fastest and cheapest — best when you need a simple field (email, title) from someone with a clear, well-indexed online presence and coverage gaps are acceptable. Expect lower hit rate than `low`.
 
 **`low`** (default) — Fast, single-pass lookup. The agent checks well-indexed public sources (LinkedIn, company websites, professional directories) and returns what it finds on the first pass. Best for standard fields on subjects with a clear online presence — title, LinkedIn, company basics, professional background. The right default for high-volume work where speed and cost matter.
 
