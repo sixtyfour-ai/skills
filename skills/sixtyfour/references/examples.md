@@ -341,3 +341,65 @@ curl -s -X POST "$API_URL/workflows/run?workflow_id=WF_ID" \
 ```
 
 Note the `company_to_leads` block between `company_enrichment` and `find_email` — this is required because `find_email` operates on LEAD data, not COMPANY data.
+
+---
+
+## 9. Age verification — KYC/compliance check
+
+**User**: "Can you verify Jane Doe's age for our KYC process?"
+
+### Step 1: Start the verification
+
+```bash
+RESPONSE=$(curl -s -X POST "$API_URL/verify-age" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subject": {
+      "name": "Jane Doe",
+      "company": "Acme Corp",
+      "linkedin": "https://www.linkedin.com/in/janedoe"
+    }
+  }')
+
+TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
+```
+
+### Step 2: Poll for the result
+
+```bash
+python3 scripts/poll_job.py age-verify "$TASK_ID" --timeout 900
+```
+
+Once `completed`, the result includes `date_of_birth` (day/month/year, each `null` unless backed by concrete evidence), a grounded `age.value` estimate, `evidence`, and source URLs. Never assume a date component that came back `null` — it means it wasn't established.
+
+---
+
+## 10. Schedule a recurring workflow
+
+**User**: "Run my lead-enrichment workflow every morning at 9am Eastern"
+
+### Step 1: Create the schedule (workflow must already exist)
+
+```bash
+curl -s -X POST "$API_URL/schedules" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_id": "WF_ID",
+    "name": "Daily lead refresh",
+    "cron_expression": "0 9 * * *",
+    "timezone": "America/New_York"
+  }'
+```
+
+Response includes `next_run_times` — the upcoming fire times so you can confirm the cron expression did what you expected.
+
+### Step 2 (optional): Pause or update later
+
+```bash
+curl -X PATCH "$API_URL/schedules/SCHEDULE_ID" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}'
+```

@@ -223,6 +223,72 @@ curl -X POST "$API_URL/workflows/cancel?job_id=RUN_ID" \
 ```
 
 
+## Scheduling workflows
+
+Trigger a workflow on a recurring cadence without polling or external cron infrastructure. A schedule binds a `workflow_id` to a `cron_expression` and `timezone`. The workflow must already exist and (for API-triggered workflows) start with a `webhook` block.
+
+A schedule is bound to the creating user or API key — if that entity loses access to the org, the schedule is automatically paused and `disabled_reason` is set on the response. Scheduled runs are billed the same as manual runs.
+
+### POST /schedules (create)
+
+```bash
+curl -X POST "$API_URL/schedules" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "workflow_id": "WF_ID",
+    "name": "Daily lead refresh",
+    "cron_expression": "0 9 * * *",
+    "timezone": "America/New_York",
+    "description": "Re-enrich the prospect list every morning"
+  }'
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| workflow_id | yes | The workflow to run — must already exist |
+| name | yes | Up to 120 characters |
+| cron_expression | yes | Standard 5-field cron (`minute hour day month weekday`) |
+| timezone | no | IANA timezone, e.g. `America/Los_Angeles`. Defaults to `UTC` |
+| description | no | Free-form text |
+| is_active | no | Defaults to `true`. Set `false` to save without activating |
+
+**Response** (`ScheduleResponse`): `id`, `workflow_id`, `name`, `description`, `cron_expression`, `timezone`, `is_active`, `disabled_reason`, `created_by`, `next_run_times` (array of upcoming ISO timestamps), `created_at`, `updated_at`.
+
+### GET /schedules (list)
+
+```bash
+curl "$API_URL/schedules" -H "x-api-key: $SIXTYFOUR_API_KEY"
+# Optional: filter to one workflow
+curl "$API_URL/schedules?workflow_id=WF_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
+### GET /schedules/{schedule_id} (get one)
+
+```bash
+curl "$API_URL/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
+### PATCH /schedules/{schedule_id} (update)
+
+All fields optional — only send what changes. Reactivating a paused/auto-disabled schedule re-binds it to the caller and clears `disabled_reason`.
+
+```bash
+curl -X PATCH "$API_URL/schedules/SCHEDULE_ID" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"is_active": false}'
+```
+
+### DELETE /schedules/{schedule_id} (delete)
+
+```bash
+curl -X DELETE "$API_URL/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
+Deleting a schedule does not affect the underlying workflow or its run history.
+
+
 ## Tips
 
 - Add `filter` blocks BEFORE enrichment to reduce credit usage (enrich only the rows you need)
