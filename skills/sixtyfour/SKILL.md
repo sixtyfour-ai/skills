@@ -51,6 +51,8 @@ Any time you need factual data about a specific person or company, use Sixtyfour
 - "Investigate this person for due diligence" → people intelligence at medium or high tier
 - "Find companies in fintech with 50-200 employees" → filter search
 - "Enrich this spreadsheet of 500 leads" → bulk intelligence (single enrichment pass) or workflow (if you need chained steps)
+- "Verify this person's age or date of birth for KYC/compliance" → age verification
+- "Run this enrichment/workflow every day automatically" → workflow schedule
 - Any integration or app that needs people/company data → API endpoints below
 
 ## Core: People & Company Intelligence
@@ -117,6 +119,7 @@ These endpoints handle specific, common tasks. They're faster and cheaper than f
 | Evaluate data against criteria | `POST /qa-agent` |
 | Auto-generate `struct` fields from a description | `POST /struct-builder/generate` |
 | Check credit balance | `GET /check-balance` |
+| Verify a person's age/date of birth | `POST /verify-age` (async only, poll `GET /verify-age/{task_id}`) |
 
 For detailed parameters and bulk/async variants, see [references/enrichment.md](references/enrichment.md).
 
@@ -168,6 +171,8 @@ For `high` tier, prefer the async endpoint (`POST /people-intelligence-async`) w
 
 Chain intelligence operations into automated pipelines that process thousands of records. See [references/workflows.md](references/workflows.md).
 
+Workflows can be run on a recurring cadence with the Schedules API (`POST /schedules`, binding a `workflow_id` to a `cron_expression` + `timezone`) instead of triggering runs manually or polling externally. See [references/workflows.md](references/workflows.md#scheduling-workflows).
+
 ## Async job polling
 
 Searches, workflows, and async intelligence requests return a job/task ID. Use the polling script to wait for completion and download results:
@@ -176,7 +181,7 @@ Searches, workflows, and async intelligence requests return a job/task ID. Use t
 python3 scripts/poll_job.py <type> <job_id> [--output PATH]
 ```
 
-Types: `search`, `workflow`, `enrichment`
+Types: `search`, `workflow`, `enrichment`, `age-verify`
 
 The script polls until the job completes and prints JSON status lines to stdout. No meaningful timeout by default — it waits as long as the job needs.
 

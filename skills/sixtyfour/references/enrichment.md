@@ -305,6 +305,55 @@ curl -X POST "$API_URL/qa-agent" \
 Async variant: `POST /qa-agent-async` → poll with `GET /job-status/{task_id}`
 
 
+## Age Verification
+
+Establish a person's date of birth (or a grounded age estimate) from open-source research, with per-field confidence and sourced evidence. Use for trust-and-safety, KYC, and due-diligence workflows where self-reported age isn't enough. Async-only — there is no sync variant.
+
+### POST /verify-age (start)
+
+```bash
+curl -X POST "$API_URL/verify-age" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "subject": {
+      "name": "Jane Doe",
+      "company": "Acme Corp",
+      "linkedin": "https://www.linkedin.com/in/janedoe"
+    }
+  }'
+```
+
+**subject** — any identifiers you have (name, company, linkedin, email, location, etc.); more is better. `lead_info` and `input` are accepted as aliases for `subject`, so callers already integrated with People Intelligence can reuse the same request shape.
+
+**Response:** `{"task_id": "job_abc123", "status": "RUNNING"}`
+
+### GET /verify-age/{task_id} (poll)
+
+```bash
+curl "$API_URL/verify-age/$TASK_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
+Or use the polling script: `python3 scripts/poll_job.py age-verify TASK_ID`
+
+Status values: `running`, `completed`, `failed`, `cancelled`, `terminated`, `timed_out`.
+
+**Response once `completed`:**
+```json
+{
+  "status": "completed",
+  "date_of_birth": {"day": 14, "month": 3, "year": 1990, "confidence": 8},
+  "age": {"value": 36, "as_of": "2026-07-31", "confidence": 8},
+  "evidence": "Summary of what evidence established the date of birth or age.",
+  "sources": ["https://..."]
+}
+```
+
+Each `date_of_birth` component (`day`/`month`/`year`) is individually gated on evidence — it's `null` unless established from a concrete source (never guessed). `age.value` may still be populated as a grounded estimate even when the exact date of birth isn't fully known.
+
+**Pricing:** billed at the same rate as the `high` tier of People Intelligence, but unlike calling `/people-intelligence` with `tier: "high"` directly, Age Verification does **not** require enterprise/high-tier approval — it's available to any paying org.
+
+
 ## Tiers and access
 
 The `tier` parameter controls research depth across all intelligence endpoints (people, company, and bulk). Full descriptions are in the main SKILL.md. Summary:
@@ -335,6 +384,7 @@ The API will always return a response — no client-side timeouts needed.
 | people/company-intelligence | medium | 30-180s |
 | people/company-intelligence | high | minutes (no cap — agent investigates until done) |
 | qa-agent | — | 30-180s |
+| verify-age | — | minutes (OSINT-grade research, no time cap) |
 
 
 ## Legacy endpoints — do not use

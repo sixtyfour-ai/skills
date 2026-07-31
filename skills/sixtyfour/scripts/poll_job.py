@@ -6,6 +6,7 @@ Usage:
   python3 poll_job.py search <task_id> [--timeout 600] [--output /tmp/results.csv]
   python3 poll_job.py workflow <run_id> [--timeout 1800] [--output /tmp/results.csv]
   python3 poll_job.py enrichment <job_id> [--timeout 900]
+  python3 poll_job.py age-verify <task_id> [--timeout 900]
 
 Environment:
   SIXTYFOUR_API_KEY       Required. Get one at https://app.sixtyfour.ai/keys
@@ -160,16 +161,47 @@ def poll_enrichment(job_id, api_key, base_url, timeout, interval):
     return 1
 
 
+def poll_age_verify(task_id, api_key, base_url, timeout, interval):
+    start = time.time()
+    terminal_non_success = {"failed", "cancelled", "terminated", "timed_out"}
+    while time.time() - start < timeout:
+        resp = _request("GET", f"/verify-age/{task_id}", api_key, base_url)
+        if "_http_error" in resp:
+            _log({"error": f"HTTP {resp['_http_error']}", "detail": resp["_detail"]})
+            sys.exit(1)
+
+        status = resp.get("status", "unknown")
+        _log({
+            "type": "age-verify",
+            "status": status,
+            "elapsed_s": round(time.time() - start),
+        })
+
+        if status == "completed":
+            result = {k: v for k, v in resp.items() if k != "status"}
+            _log({"result": "completed", "data": result})
+            return 0
+
+        if status in terminal_non_success:
+            _log({"result": status, "detail": resp})
+            return 1
+
+        time.sleep(interval)
+
+    _log({"result": "timeout", "timeout_s": timeout})
+    return 1
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Poll async Sixtyfour jobs and download results.",
         epilog="Set SIXTYFOUR_API_KEY before running. Get a key at https://app.sixtyfour.ai/keys",
     )
-    parser.add_argument("type", choices=["search", "workflow", "enrichment"], help="Job type to poll")
-    parser.add_argument("job_id", help="Task ID (search), run ID (workflow), or job ID (enrichment)")
+    parser.add_argument("type", choices=["search", "workflow", "enrichment", "age-verify"], help="Job type to poll")
+    parser.add_argument("job_id", help="Task ID (search, age-verify), run ID (workflow), or job ID (enrichment)")
     parser.add_argument("--timeout", type=int, default=86400, help="Max seconds to wait (default: 86400 — effectively no limit)")
     parser.add_argument("--output", "-o", help="Download results to this file path (search and workflow only)")
-    parser.add_argument("--interval", type=int, help="Poll interval in seconds (default: 12 for search, 8 for workflow, 10 for enrichment)")
+    parser.add_argument("--interval", type=int, help="Poll interval in seconds (default: 12 for search, 8 for workflow, 10 for enrichment/age-verify)")
     args = parser.parse_args()
 
     api_key = os.environ.get("SIXTYFOUR_API_KEY")
@@ -185,6 +217,8 @@ def main():
         sys.exit(poll_workflow(args.job_id, api_key, base_url, args.timeout, args.output, args.interval or 8))
     elif args.type == "enrichment":
         sys.exit(poll_enrichment(args.job_id, api_key, base_url, args.timeout, args.interval or 10))
+    elif args.type == "age-verify":
+        sys.exit(poll_age_verify(args.job_id, api_key, base_url, args.timeout, args.interval or 10))
 
 
 if __name__ == "__main__":
