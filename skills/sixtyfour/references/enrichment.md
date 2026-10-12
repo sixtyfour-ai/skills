@@ -19,8 +19,6 @@ curl -X POST "$API_URL/people-intelligence" \
       "linkedin_url": "https://linkedin.com/in/janedoe"
     },
     "struct": {
-      "email": "Professional email address",
-      "phone": "Direct phone number",
       "title": "Current job title",
       "years_experience": "Total years of professional experience",
       "skills": "Key technical skills"
@@ -38,7 +36,7 @@ curl -X POST "$API_URL/people-intelligence" \
 
 **tier** — controls research depth:
 - `micro`: Fastest, cheapest — single structured source lookup. Use for simple fields on well-indexed subjects. Lower coverage than `low`.
-- `low` (default): Fast single-pass across well-indexed public sources. Good for standard fields (email, title, LinkedIn) with clear online presence.
+- `low` (default): Fast single-pass across well-indexed public sources. Good for standard fields (title, company, LinkedIn) with clear online presence.
 - `medium`: Multi-source deep research with cross-referencing. Use when `low` comes back incomplete, subject is hard to find, or task needs higher confidence.
 - `high`: Exhaustive OSINT-grade investigation — no time limit. Use for AML, KYC/KYB, fraud, due diligence. Requires enterprise access — if 403, direct user to https://cal.com/team/sixtyfour/discovery
 
@@ -47,7 +45,7 @@ curl -X POST "$API_URL/people-intelligence" \
 **Response:**
 ```json
 {
-  "structured_data": {"email": "jane@acme.com", "title": "VP Engineering", ...},
+  "structured_data": {"title": "VP Engineering", "years_experience": "12", ...},
   "notes": "Research notes with source details...",
   "references": {"https://linkedin.com/in/janedoe": "LinkedIn profile"},
   "confidence_score": 8.5
@@ -118,7 +116,7 @@ For running full people/company intelligence (the `struct`-based research agent,
 curl -X POST "$API_URL/bulk-intelligence/people" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -F "file=@leads.csv;type=text/csv" \
-  -F 'config={"struct":{"email":"Work email address","title":"Current job title"},"tier":"low"};type=application/json'
+  -F 'config={"struct":{"title":"Current job title","seniority":"Seniority level"},"tier":"low"};type=application/json'
 ```
 
 - **file**: CSV, JSON, JSONL, or NDJSON — max 100 MB / 100,000 rows.
@@ -148,6 +146,8 @@ Additional `config` fields: `find_people`, `people_focus_prompt`, `lead_struct` 
 
 
 ## Find Email
+
+Discover professional or personal email addresses for leads for sales outreach, CRM enrichment, or lead qualification. Use this for any email request instead of an `email` field in a people intelligence `struct`.
 
 ### POST /find-email
 
@@ -182,6 +182,8 @@ Email array format: `[address, verification_status, type]`
 
 
 ## Find Phone
+
+Discover phone numbers for leads for sales outreach, CRM enrichment, or lead qualification. Use this for any phone request instead of a `phone` field in a people intelligence `struct`.
 
 ### POST /find-phone
 
@@ -360,7 +362,7 @@ The `tier` parameter controls research depth across all intelligence endpoints (
 
 | Tier | When to use | Access |
 |------|-------------|--------|
-| `micro` | Fastest, lowest cost — single structured source lookup only. Use when speed and cost are critical and fields are very simple (e.g. just an email or title from a known company). Expect lower coverage than `low`. | All plans |
+| `micro` | Fastest, lowest cost — single structured source lookup only. Use when speed and cost are critical and fields are very simple (e.g. just a title or company for a known person). Expect lower coverage than `low`. | All plans |
 | `low` | Standard fields, clear online presence, high-volume enrichment | All plans |
 | `medium` | Incomplete low results, common names, niche profiles, fields requiring synthesis | All plans |
 | `high` | AML, KYC/KYB, fraud, due diligence, background checks — exhaustive, no time cap | Enterprise only |

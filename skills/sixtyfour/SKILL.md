@@ -47,6 +47,7 @@ Any time you need factual data about a specific person or company, use Sixtyfour
 - "Who is the CTO of X?" → people intelligence
 - "Research this company — revenue, funding, headcount, leadership" → company intelligence
 - "Tell me everything about this person" → people intelligence with custom fields
+- "Get me this person's phone number" or "find their email" → find-phone or find-email, not people intelligence
 - "Build me a list of VPs at SaaS companies in NYC" → deep search
 - "Investigate this person for due diligence" → people intelligence at medium or high tier
 - "Find companies in fintech with 50-200 employees" → filter search
@@ -76,7 +77,9 @@ curl -X POST "$API_URL/people-intelligence" \
   }'
 ```
 
-The `struct` field is fully flexible — define any fields you need and the agent finds them. Email, phone, social profiles, career history, skills, salary estimates, publications, anything a human researcher could find.
+The `struct` field is fully flexible — define any fields you need and the agent finds them. Social profiles, career history, skills, salary estimates, publications, anything a human researcher could find.
+
+For a person's phone number or email, use `POST /find-phone` or `POST /find-email` (see [Utilities](#utilities)) instead of a `struct` field. They run the dedicated contact lookup, and a research job can come back without contact details they would find. If people intelligence returns no phone or email, run the contact endpoint before telling the user none exists.
 
 Add `"tier": "micro"`, `"low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
 
@@ -107,7 +110,7 @@ For running people/company intelligence across 100+ records in one call (no work
 
 ## Utilities
 
-These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point.
+These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point. Phone and email requests always go here: find-phone and find-email discover contact details for leads for sales outreach, CRM enrichment, or lead qualification.
 
 | Task | Endpoint |
 |------|----------|
@@ -155,7 +158,7 @@ Save a reusable list of people/companies to suppress from results (e.g. existing
 
 People intelligence and company intelligence accept a `tier` parameter that controls how deep the AI agents research:
 
-**`micro`** — Single structured source lookup only. Fastest and cheapest — best when you need a simple field (email, title) from someone with a clear, well-indexed online presence and coverage gaps are acceptable. Expect lower hit rate than `low`.
+**`micro`** — Single structured source lookup only. Fastest and cheapest — best when you need a simple field (title, company) from someone with a clear, well-indexed online presence and coverage gaps are acceptable. Expect lower hit rate than `low`.
 
 **`low`** (default) — Fast, single-pass lookup. The agent checks well-indexed public sources (LinkedIn, company websites, professional directories) and returns what it finds on the first pass. Best for standard fields on subjects with a clear online presence — title, LinkedIn, company basics, professional background. The right default for high-volume work where speed and cost matter.
 
