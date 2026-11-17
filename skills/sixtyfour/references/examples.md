@@ -11,126 +11,105 @@ API_URL="${SIXTYFOUR_API_ENDPOINT:-https://api.sixtyfour.ai}"
 
 ## 1. Find someone's email (simplest case)
 
-**User**: "Find me the email for Sarah Chen at Figma"
+**User**: "What's the email for Jane Doe at Acme Corp?"
 
 ```bash
-curl -X POST "$API_URL/find-email" \
+curl -s -X POST "$API_URL/v1/people/contacts" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"lead": {"name": "Sarah Chen", "company": "Figma"}}'
+  -d '{"person": {"name": "Jane Doe", "company": "Acme Corp"}, "find": ["work_email"], "wait_seconds": 20}'
 ```
 
-Response:
-```json
-{
-  "name": "Sarah Chen",
-  "company": "Figma",
-  "email": [["sarah@figma.com", "OK", "COMPANY"]],
-  "cost_cents": 5
-}
-```
-
-Done. One request, instant result.
+The response is a Job. When `status` is `succeeded`, read `result.email` and `result.email_status` (`OK` is verified; `NOT_FOUND` means no address). If the response is `202` with `status: "running"`, poll it: `python3 scripts/poll_job.py JOB_ID`.
 
 ---
 
 ## 2. Research a company
 
-**User**: "What can you tell me about Ramp? Revenue, headcount, funding, and who runs engineering?"
+**User**: "Research Ramp — revenue, headcount, funding, engineering leadership"
 
 ```bash
-curl -X POST "$API_URL/company-intelligence" \
+curl -s -X POST "$API_URL/v1/companies/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_company": {"company_name": "Ramp", "website": "ramp.com"},
-    "struct": {
-      "annual_revenue": "Estimated annual revenue",
-      "employee_count": "Total number of employees",
-      "total_funding": "Total funding raised with last round details",
-      "tech_stack": "Key technologies and frameworks used"
+    "company": {"name": "Ramp", "website": "ramp.com"},
+    "tier": "low",
+    "fields": {
+      "revenue_estimate": "Estimated annual revenue",
+      "employee_count": {"type": "int", "description": "Total employees"},
+      "funding_history": "Funding rounds with amounts and lead investors"
     },
     "find_people": true,
-    "people_focus_prompt": "VP of Engineering, CTO, Head of Engineering, engineering directors",
-    "tier": "medium"
+    "people_focus_prompt": "Engineering leadership",
+    "wait_seconds": 20
   }'
 ```
 
-Response includes `structured_data` with all requested fields, `notes` with detailed research, and a list of engineering leaders found.
+Poll the returned `job_id`, then read `GET /v1/jobs/JOB_ID/items`: the fields are in `items[0].result` and the people in `items[0].result.leads`.
 
 ---
 
-## 3. Deep search — build a prospect list
+## 3. Natural language search — build a prospect list
 
-**User**: "Find me 200 VPs of Sales at Series B+ SaaS companies in the Bay Area"
+**User**: "Find 500 VPs of Sales at Series B SaaS startups in NYC"
 
 ### Step 1: Start the search
 
 ```bash
-RESPONSE=$(curl -s -X POST "$API_URL/search/start-deep-search" \
+curl -s -X POST "$API_URL/v1/people/search" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "VP of Sales at Series B or later SaaS companies in San Francisco Bay Area", "mode": "people", "max_results": 200}')
-
-TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
-echo "Search started: $TASK_ID"
+  -d '{"query": "VP of Sales at Series B SaaS startups in New York City", "max_results": 500, "wait_seconds": 0}'
 ```
 
 ### Step 2: Poll and download
 
 ```bash
-python3 scripts/poll_job.py search "$TASK_ID" --output /tmp/vp_sales_bay_area.csv --timeout 300
+python3 scripts/poll_job.py JOB_ID --output /tmp/vp_sales.csv
 ```
 
 ### Step 3: Use the results
 
-The CSV contains structured profiles. You can inspect it:
-
-```bash
-head -5 /tmp/vp_sales_bay_area.csv
-```
-
-Or pipe it into a workflow for further enrichment (emails, phones, custom fields).
+Read the CSV and summarize it for the user. For emails or deeper fields on these people, pass the search Job to a workflow or send the rows as `people` to `/v1/people/contacts` or `/v1/people/intelligence`.
 
 ---
 
 ## 4. Filter search — structured criteria
 
-**User**: "Find US SaaS companies with 50-500 employees in the fintech space"
+**User**: "Find US software companies with 50-500 employees"
 
 ### Step 1: Discover available field values
 
 ```bash
 # What values exist for the industry field?
-curl -s -X POST "$API_URL/search/filter-field-values" \
+curl -s -X POST "$API_URL/v1/companies/search/field-values" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"mode": "company", "field": "industry", "top_k": 50}' | python3 -m json.tool
+  -d '{"field": "industry", "max_results": 25}'
 ```
 
 ### Step 2: Run the filter search
 
 ```bash
-RESPONSE=$(curl -s -X POST "$API_URL/search/start-filter-search" \
+curl -s -X POST "$API_URL/v1/companies/search" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "mode": "company",
-    "simple_filters": {
+    "filters": {
       "hq_country_iso2": {"$eq": "US"},
       "employees_count": {"$gte": 50, "$lte": 500},
-      "industry": {"$in": ["Financial Services", "Fintech", "Financial Technology"]}
+      "industry": {"$in": ["Software Development"]}
     },
-    "max_results": 1000
-  }')
-
-TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
+    "max_results": 1000,
+    "wait_seconds": 20
+  }'
 ```
 
 ### Step 3: Poll and download
 
 ```bash
-python3 scripts/poll_job.py search "$TASK_ID" --output /tmp/fintech_companies.csv
+python3 scripts/poll_job.py JOB_ID --output /tmp/companies.csv
 ```
 
 ---
@@ -142,13 +121,13 @@ python3 scripts/poll_job.py search "$TASK_ID" --output /tmp/fintech_companies.cs
 ### Step 1: Create the workflow
 
 ```bash
-curl -s -X POST "$API_URL/workflows/create_workflow" \
+curl -s -X POST "$API_URL/v1/workflows" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_name": "AI Startup Engineering Managers",
-    "workflow_description": "Find engineering managers at AI startups, enrich profiles, get emails",
-    "workflow_definition": {
+    "name": "AI Startup Engineering Managers",
+    "description": "Find engineering managers at AI startups, enrich profiles, get emails",
+    "definition": {
       "blocks": [
         {
           "sequence_number": 1, "block_name": "search", "block_type": "search", "block_id": "source",
@@ -190,57 +169,50 @@ curl -s -X POST "$API_URL/workflows/create_workflow" \
   }'
 ```
 
-Extract the workflow ID from the response.
+Read `workflow_id` from the response.
 
 ### Step 2: Run the workflow
 
-The search block with `auto_execute: true` already ran at creation. For webhook-based workflows, you'd run:
-
 ```bash
-curl -s -X POST "$API_URL/workflows/run?workflow_id=WF_ID" \
+curl -s -X POST "$API_URL/v1/workflows/WORKFLOW_ID/runs" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"webhook_payload": []}'
+  -d '{}'
 ```
+
+The response is a Job. This workflow's source is a search block, so the run needs no `input`.
 
 ### Step 3: Poll and download
 
 ```bash
-python3 scripts/poll_job.py workflow RUN_ID --timeout 1800 --output /tmp/ai_eng_managers.csv
+python3 scripts/poll_job.py JOB_ID --timeout 1800 --output /tmp/ai_eng_managers.csv
 ```
 
 ---
 
 ## 6. Workflow — enrich an existing list (webhook input)
 
-**User**: "I have a list of 50 leads. Enrich them with titles, emails, and company revenue."
+**User**: "I have a list of 200 leads — get their work emails and titles"
 
 ### Step 1: Create the workflow
 
 ```bash
-curl -s -X POST "$API_URL/workflows/create_workflow" \
+curl -s -X POST "$API_URL/v1/workflows" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_name": "Inbound Lead Enrichment",
-    "workflow_description": "Enrich provided leads with title, email, and company revenue",
-    "workflow_definition": {
+    "name": "Enrich my leads",
+    "description": "Find work emails and titles for a list of leads",
+    "definition": {
       "blocks": [
         {"sequence_number": 1, "block_name": "webhook", "block_type": "webhook", "block_id": "input", "specs": {}},
         {"sequence_number": 2, "block_name": "lead_enrichment", "block_type": "lead_enrichment", "block_id": "enrich",
-         "specs": {"return_fields": {
-           "title": {"description": "Current job title", "type": "str"},
-           "company_revenue": {"description": "Estimated annual revenue of their company", "type": "str"},
-           "linkedin_url": {"description": "LinkedIn profile URL", "type": "str"}
-         }}},
-        {"sequence_number": 3, "block_name": "find_email", "block_type": "find_email", "block_id": "emails", "specs": {"mode": "PROFESSIONAL"}},
-        {"sequence_number": 4, "block_name": "append_to_notebook", "block_type": "append_to_notebook", "block_id": "save",
-         "specs": {"notebook_id": "__create_new__", "notebook_name": "Enriched Leads"}}
+          "specs": {"return_fields": {"title": {"description": "Current job title", "type": "str"}}}},
+        {"sequence_number": 3, "block_name": "find_email", "block_type": "find_email", "block_id": "emails", "specs": {"mode": "PROFESSIONAL"}}
       ],
       "edges": [
         {"from_block_id": "input", "to_block_id": "enrich"},
-        {"from_block_id": "enrich", "to_block_id": "emails"},
-        {"from_block_id": "emails", "to_block_id": "save"}
+        {"from_block_id": "enrich", "to_block_id": "emails"}
       ]
     }
   }'
@@ -249,156 +221,143 @@ curl -s -X POST "$API_URL/workflows/create_workflow" \
 ### Step 2: Run with your data
 
 ```bash
-RESPONSE=$(curl -s -X POST "$API_URL/workflows/run?workflow_id=WF_ID" \
+curl -s -X POST "$API_URL/v1/workflows/WORKFLOW_ID/runs" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"webhook_payload": [
+  -d '{"input": [
     {"full_name": "Jane Doe", "company": "Acme Corp"},
-    {"full_name": "John Smith", "company": "Globex Inc"},
-    {"full_name": "Alice Johnson", "company": "Initech"}
-  ]}')
-
-RUN_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
+    {"full_name": "John Smith", "company": "Globex Inc"}
+  ]}'
 ```
 
 ### Step 3: Poll and download
 
 ```bash
-python3 scripts/poll_job.py workflow "$RUN_ID" --timeout 1800 --output /tmp/enriched_leads.csv
+python3 scripts/poll_job.py JOB_ID --timeout 1800 --output /tmp/enriched_leads.csv
 ```
+
+For a single pass with no chained steps, skip the workflow: send the rows as `people` to `/v1/people/contacts` or `/v1/people/intelligence`.
 
 ---
 
 ## 7. Reverse lookup — who owns this email?
 
-**User**: "Who is behind the email cto@startup.io?"
+**User**: "Who is jane@acme.com?"
 
 ```bash
-curl -X POST "$API_URL/reverse-email" \
+curl -s -X POST "$API_URL/v1/people/contacts/reverse" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"email": "cto@startup.io"}'
+  -d '{"email": "jane@acme.com", "wait_seconds": 20}'
 ```
 
-Returns the person's name, company, title, LinkedIn, and other profile data.
+When the Job is `succeeded`, `result` holds the profile (`firstname`, `lastname`, `title`, `company_name`, `linkedin_url`). With no match, `result.email_error` is `"No data found"`.
 
 ---
 
 ## 8. Company research pipeline — companies + their people + contact info
 
-**User**: "Research these 5 companies, find their sales leaders, and get emails"
+**User**: "Research these 3 fintech companies, find their heads of engineering, and get their emails"
+
+### Step 1: Research the companies and find people
 
 ```bash
-curl -s -X POST "$API_URL/workflows/create_workflow" \
+curl -s -X POST "$API_URL/v1/companies/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_name": "Company Research Pipeline",
-    "workflow_description": "Research companies, find sales leaders, get emails",
-    "workflow_definition": {
-      "blocks": [
-        {"sequence_number": 1, "block_name": "webhook", "block_type": "webhook", "block_id": "input", "specs": {}},
-        {"sequence_number": 2, "block_name": "company_enrichment", "block_type": "company_enrichment", "block_id": "enrich",
-         "specs": {
-           "find_people": true,
-           "people_focus_prompt": "VP Sales, Head of Sales, CRO, Sales Director",
-           "return_fields": {
-             "revenue": {"description": "Annual revenue estimate", "type": "str"},
-             "employee_count": {"description": "Total employees", "type": "int"},
-             "funding": {"description": "Latest funding round and amount", "type": "str"}
-           }
-         }},
-        {"sequence_number": 3, "block_name": "company_to_leads", "block_type": "company_to_leads", "block_id": "extract_people", "specs": {}},
-        {"sequence_number": 4, "block_name": "find_email", "block_type": "find_email", "block_id": "emails", "specs": {"mode": "PROFESSIONAL"}},
-        {"sequence_number": 5, "block_name": "find_phone", "block_type": "find_phone", "block_id": "phones", "specs": {}},
-        {"sequence_number": 6, "block_name": "append_to_notebook", "block_type": "append_to_notebook", "block_id": "save",
-         "specs": {"notebook_id": "__create_new__", "notebook_name": "Sales Leaders"}}
-      ],
-      "edges": [
-        {"from_block_id": "input", "to_block_id": "enrich"},
-        {"from_block_id": "enrich", "to_block_id": "extract_people"},
-        {"from_block_id": "extract_people", "to_block_id": "emails"},
-        {"from_block_id": "emails", "to_block_id": "phones"},
-        {"from_block_id": "phones", "to_block_id": "save"}
-      ]
-    }
+    "companies": [
+      {"name": "Ramp", "website": "ramp.com"},
+      {"name": "Brex", "website": "brex.com"},
+      {"name": "Mercury", "website": "mercury.com"}
+    ],
+    "tier": "low",
+    "fields": {"employee_count": {"type": "int", "description": "Total employees"}, "funding_total": "Total funding raised"},
+    "find_people": true,
+    "people_focus_prompt": "Head of Engineering, VP Engineering, CTO",
+    "wait_seconds": 0
   }'
 ```
 
-Then run with company data:
+### Step 2: Read the companies and their people
 
 ```bash
-curl -s -X POST "$API_URL/workflows/run?workflow_id=WF_ID" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"webhook_payload": [
-    {"company_name": "Stripe", "website": "stripe.com"},
-    {"company_name": "Ramp", "website": "ramp.com"},
-    {"company_name": "Brex", "website": "brex.com"},
-    {"company_name": "Mercury", "website": "mercury.com"},
-    {"company_name": "Plaid", "website": "plaid.com"}
-  ]}'
+python3 scripts/poll_job.py JOB_ID
+curl -s "$API_URL/v1/jobs/JOB_ID/items" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
-Note the `company_to_leads` block between `company_enrichment` and `find_email` — this is required because `find_email` operates on LEAD data, not COMPANY data.
+Each item's `result.leads` lists the people found.
+
+### Step 3: Get contact info for the people
+
+```bash
+curl -s -X POST "$API_URL/v1/people/contacts" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "people": [
+      {"name": "PERSON_NAME", "company": "Ramp"},
+      {"name": "PERSON_NAME", "company": "Brex"}
+    ],
+    "find": ["work_email", "phone"],
+    "wait_seconds": 20
+  }'
+```
+
+Read the rows from `GET /v1/jobs/JOB_ID/items`.
 
 ---
 
 ## 9. Age verification — KYC/compliance check
 
-**User**: "Can you verify Jane Doe's age for our KYC process?"
+**User**: "Verify this person is over 18: Jane Doe at Acme Corp"
 
 ### Step 1: Start the verification
 
 ```bash
-RESPONSE=$(curl -s -X POST "$API_URL/verify-age" \
+curl -s -X POST "$API_URL/v1/people/age-verification" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "subject": {
-      "name": "Jane Doe",
-      "company": "Acme Corp",
-      "linkedin": "https://www.linkedin.com/in/janedoe"
-    }
-  }')
-
-TASK_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['task_id'])")
+    "person": {"name": "Jane Doe", "company": "Acme Corp", "linkedin": "https://www.linkedin.com/in/janedoe"},
+    "wait_seconds": 0
+  }'
 ```
 
 ### Step 2: Poll for the result
 
 ```bash
-python3 scripts/poll_job.py age-verify "$TASK_ID" --timeout 900
+python3 scripts/poll_job.py JOB_ID
 ```
 
-Once `completed`, the result includes `date_of_birth` (day/month/year, each `null` unless backed by concrete evidence), a grounded `age.value` estimate, `evidence`, and source URLs. Never assume a date component that came back `null` — it means it wasn't established.
+The finished Job's `result` has `date_of_birth`, `age` (`value`, `as_of`, `confidence` 0 to 100), `evidence` and `sources`. Report the confidence and sources along with the answer; send low-confidence results to a human.
 
 ---
 
 ## 10. Schedule a recurring workflow
 
-**User**: "Run my lead-enrichment workflow every morning at 9am Eastern"
+**User**: "Run my lead refresh workflow every weekday at 9am Eastern"
 
 ### Step 1: Create the schedule (workflow must already exist)
 
 ```bash
-curl -s -X POST "$API_URL/schedules" \
+curl -s -X POST "$API_URL/v1/schedules" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_id": "WF_ID",
-    "name": "Daily lead refresh",
-    "cron_expression": "0 9 * * *",
+    "workflow_id": "WORKFLOW_ID",
+    "name": "Weekday lead refresh",
+    "cron_expression": "0 9 * * 1-5",
     "timezone": "America/New_York"
   }'
 ```
 
-Response includes `next_run_times` — the upcoming fire times so you can confirm the cron expression did what you expected.
+The response includes `schedule_id` and `next_run_times`.
 
 ### Step 2 (optional): Pause or update later
 
 ```bash
-curl -X PATCH "$API_URL/schedules/SCHEDULE_ID" \
+curl -s -X PATCH "$API_URL/v1/schedules/SCHEDULE_ID" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"is_active": false}'

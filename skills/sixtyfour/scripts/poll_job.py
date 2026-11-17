@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """
-Poll async Sixtyfour jobs and download results.
+Poll a Sixtyfour Job until it finishes and optionally download its results.
+
+Every /v1 start (contacts, intelligence, search, age verification, workflow
+runs, exports) returns a job_id. This script follows it at GET /v1/jobs/{job_id}.
 
 Usage:
-  python3 poll_job.py search <task_id> [--timeout 600] [--output /tmp/results.csv]
-  python3 poll_job.py workflow <run_id> [--timeout 1800] [--output /tmp/results.csv]
-  python3 poll_job.py enrichment <job_id> [--timeout 900]
-  python3 poll_job.py age-verify <task_id> [--timeout 900]
+  python3 poll_job.py <job_id> [--timeout 900] [--output /tmp/results.csv]
+
+With --output:
+  - a Workflow Job downloads the files listed in its result;
+  - any other Job is exported to CSV (POST /v1/exports) and downloaded.
 
 Environment:
   SIXTYFOUR_API_KEY       Required. Get one at https://app.sixtyfour.ai/keys
@@ -18,14 +22,20 @@ import json
 import os
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
+
+FINAL_STATUSES = ("succeeded", "failed", "canceled")
 
 
-def _request(method, path, api_key, base_url):
-    url = f"{base_url}{path}"
+def _log(data):
+    print(json.dumps(data), flush=True)
+
+
+def _request(method, path, api_key, base_url, body=None):
     req = urllib.request.Request(
-        url,
+        f"{base_url}{path}",
+        data=json.dumps(body).encode() if body is not None else None,
         headers={"x-api-key": api_key, "Content-Type": "application/json"},
         method=method,
     )
@@ -33,192 +43,84 @@ def _request(method, path, api_key, base_url):
         with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        body = e.read().decode() if e.fp else ""
-        return {"_http_error": e.code, "_detail": body}
+        _log({"error": f"HTTP {e.code}", "detail": e.read().decode() if e.fp else ""})
+        sys.exit(1)
 
 
-def _download(url, path, api_key=None):
-    req = urllib.request.Request(url)
-    if api_key:
-        req.add_header("x-api-key", api_key)
+def _download(url, path, api_key):
+    req = urllib.request.Request(url, headers={"x-api-key": api_key})
     with urllib.request.urlopen(req) as resp, open(path, "wb") as f:
         f.write(resp.read())
 
 
-def _log(data):
-    print(json.dumps(data), flush=True)
-
-
-def poll_search(task_id, api_key, base_url, timeout, output, interval):
+def poll(job_id, api_key, base_url, deadline):
+    """Return the finished Job, or None when the deadline passes first."""
+    delay = 5
     start = time.time()
-    while time.time() - start < timeout:
-        resp = _request("GET", f"/search/status/{task_id}", api_key, base_url)
-        if "_http_error" in resp:
-            _log({"error": f"HTTP {resp['_http_error']}", "detail": resp["_detail"]})
-            sys.exit(1)
-
-        status = resp.get("status", "unknown")
+    while time.time() < deadline:
+        job = _request("GET", f"/v1/jobs/{job_id}", api_key, base_url)
         _log({
-            "type": "search",
-            "status": status,
-            "elapsed_s": round(time.time() - start),
-            "total_results": resp.get("total_results"),
-            "message": resp.get("progress_message", ""),
-        })
-
-        if status == "completed":
-            rhid = resp.get("resource_handle_id")
-            if rhid and output:
-                dl = _request("GET", f"/search/download?resource_handle_id={rhid}", api_key, base_url)
-                signed_url = dl.get("url")
-                if signed_url:
-                    _download(signed_url, output, api_key)
-                    _log({"result": "downloaded", "path": output, "total_results": resp.get("total_results")})
-            else:
-                _log({"result": "completed", "total_results": resp.get("total_results")})
-            return 0
-
-        if status == "failed":
-            _log({"result": "failed", "detail": resp})
-            return 1
-
-        time.sleep(interval)
-
-    _log({"result": "timeout", "timeout_s": timeout})
-    return 1
-
-
-def poll_workflow(run_id, api_key, base_url, timeout, output, interval):
-    start = time.time()
-    while time.time() - start < timeout:
-        resp = _request("GET", f"/workflows/runs/{run_id}/live_status", api_key, base_url)
-        if "_http_error" in resp:
-            _log({"error": f"HTTP {resp['_http_error']}", "detail": resp["_detail"]})
-            sys.exit(1)
-
-        status = resp.get("overall_status", "unknown")
-        _log({
-            "type": "workflow",
-            "status": status,
-            "progress_pct": resp.get("overall_progress_percentage", 0),
-            "elapsed_s": round(time.time() - start),
-            "current_block": resp.get("current_block", ""),
-            "completed_blocks": resp.get("completed_blocks"),
-            "total_blocks": resp.get("total_blocks"),
-        })
-
-        if status == "completed":
-            if output:
-                links = _request("GET", f"/workflows/runs/{run_id}/results/download-links", api_key, base_url)
-                if isinstance(links, list):
-                    for i, link in enumerate(links):
-                        path = output if i == 0 else f"{output}.part{i}"
-                        _download(link["download_url"], path, api_key)
-                        _log({"result": "downloaded", "path": path, "rows": link.get("row_count"), "filename": link.get("filename")})
-                else:
-                    _log({"result": "completed", "note": "no download links available"})
-            else:
-                _log({"result": "completed"})
-            return 0
-
-        if status in ("failed", "cancelled"):
-            _log({"result": status, "detail": resp})
-            return 1
-
-        time.sleep(interval)
-
-    _log({"result": "timeout", "timeout_s": timeout})
-    return 1
-
-
-def poll_enrichment(job_id, api_key, base_url, timeout, interval):
-    start = time.time()
-    while time.time() - start < timeout:
-        resp = _request("GET", f"/job-status/{job_id}", api_key, base_url)
-        if "_http_error" in resp:
-            _log({"error": f"HTTP {resp['_http_error']}", "detail": resp["_detail"]})
-            sys.exit(1)
-
-        status = resp.get("status", "unknown")
-        _log({
-            "type": "enrichment",
-            "status": status,
+            "job_id": job_id,
+            "operation": job.get("operation"),
+            "status": job.get("status"),
+            "counts": job.get("counts"),
             "elapsed_s": round(time.time() - start),
         })
-
-        if status == "completed":
-            result = {k: v for k, v in resp.items() if k != "status"}
-            _log({"result": "completed", "data": result})
-            return 0
-
-        if status == "failed":
-            _log({"result": "failed", "detail": resp})
-            return 1
-
-        time.sleep(interval)
-
-    _log({"result": "timeout", "timeout_s": timeout})
-    return 1
+        if job.get("status") in FINAL_STATUSES:
+            return job
+        delay = job.get("next_poll_after") or delay
+        time.sleep(delay)
+    return None
 
 
-def poll_age_verify(task_id, api_key, base_url, timeout, interval):
-    start = time.time()
-    terminal_non_success = {"failed", "cancelled", "terminated", "timed_out"}
-    while time.time() - start < timeout:
-        resp = _request("GET", f"/verify-age/{task_id}", api_key, base_url)
-        if "_http_error" in resp:
-            _log({"error": f"HTTP {resp['_http_error']}", "detail": resp["_detail"]})
-            sys.exit(1)
+def save_results(job, output, api_key, base_url, deadline):
+    result = job.get("result")
+    if isinstance(result, list):
+        # A Workflow Job lists one file per output block.
+        for i, item in enumerate(result):
+            path = output if i == 0 else f"{output}.part{i}"
+            _download(item["download_url"], path, api_key)
+            _log({"result": "downloaded", "path": path, "rows": item.get("row_count"), "filename": item.get("filename")})
+        return 0
 
-        status = resp.get("status", "unknown")
-        _log({
-            "type": "age-verify",
-            "status": status,
-            "elapsed_s": round(time.time() - start),
-        })
-
-        if status == "completed":
-            result = {k: v for k, v in resp.items() if k != "status"}
-            _log({"result": "completed", "data": result})
-            return 0
-
-        if status in terminal_non_success:
-            _log({"result": status, "detail": resp})
-            return 1
-
-        time.sleep(interval)
-
-    _log({"result": "timeout", "timeout_s": timeout})
-    return 1
+    export = _request("POST", "/v1/exports", api_key, base_url, {"from": {"job_id": job["job_id"]}, "format": "csv"})
+    export = poll(export["job_id"], api_key, base_url, deadline)
+    if not export or export["status"] != "succeeded":
+        _log({"result": "export_failed", "detail": export})
+        return 1
+    file = _request("GET", f"/v1/files/{export['result']['output_file_id']}", api_key, base_url)
+    _download(file["download_url"], output, api_key)
+    _log({"result": "downloaded", "path": output, "rows": file.get("row_count")})
+    return 0
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Poll async Sixtyfour jobs and download results.",
+        description="Poll a Sixtyfour Job and optionally download its results.",
         epilog="Set SIXTYFOUR_API_KEY before running. Get a key at https://app.sixtyfour.ai/keys",
     )
-    parser.add_argument("type", choices=["search", "workflow", "enrichment", "age-verify"], help="Job type to poll")
-    parser.add_argument("job_id", help="Task ID (search, age-verify), run ID (workflow), or job ID (enrichment)")
-    parser.add_argument("--timeout", type=int, default=86400, help="Max seconds to wait (default: 86400 — effectively no limit)")
-    parser.add_argument("--output", "-o", help="Download results to this file path (search and workflow only)")
-    parser.add_argument("--interval", type=int, help="Poll interval in seconds (default: 12 for search, 8 for workflow, 10 for enrichment/age-verify)")
+    parser.add_argument("job_id", help="The job_id a /v1 start returned")
+    parser.add_argument("--timeout", type=int, default=86400, help="Max seconds to wait (default: 86400)")
+    parser.add_argument("--output", "-o", help="Download results to this file path")
     args = parser.parse_args()
 
     api_key = os.environ.get("SIXTYFOUR_API_KEY")
     if not api_key:
         _log({"error": "SIXTYFOUR_API_KEY environment variable not set", "fix": "Get an API key at https://app.sixtyfour.ai/keys and run: export SIXTYFOUR_API_KEY=your_key"})
         sys.exit(1)
-
     base_url = os.environ.get("SIXTYFOUR_API_ENDPOINT", "https://api.sixtyfour.ai")
+    deadline = time.time() + args.timeout
 
-    if args.type == "search":
-        sys.exit(poll_search(args.job_id, api_key, base_url, args.timeout, args.output, args.interval or 12))
-    elif args.type == "workflow":
-        sys.exit(poll_workflow(args.job_id, api_key, base_url, args.timeout, args.output, args.interval or 8))
-    elif args.type == "enrichment":
-        sys.exit(poll_enrichment(args.job_id, api_key, base_url, args.timeout, args.interval or 10))
-    elif args.type == "age-verify":
-        sys.exit(poll_age_verify(args.job_id, api_key, base_url, args.timeout, args.interval or 10))
+    job = poll(args.job_id, api_key, base_url, deadline)
+    if job is None:
+        _log({"result": "timeout", "timeout_s": args.timeout})
+        sys.exit(1)
+    if job["status"] != "succeeded":
+        _log({"result": job["status"], "detail": job})
+        sys.exit(1)
+    if args.output:
+        sys.exit(save_results(job, args.output, api_key, base_url, deadline))
+    _log({"result": "succeeded", "job": job})
 
 
 if __name__ == "__main__":

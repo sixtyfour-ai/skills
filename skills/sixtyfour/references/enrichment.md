@@ -1,404 +1,321 @@
 # Enrichment API Reference
 
-## People Intelligence
-
-Enrich a person with any data you define. The `struct` field is fully flexible — describe any fields and the AI research agent will find them.
-
-### POST /people-intelligence (sync)
+All routes are under `/v1` and return a Job unless noted. See "How every request works" in the main SKILL.md for `wait_seconds`, polling and errors.
 
 ```bash
 API_URL="${SIXTYFOUR_API_ENDPOINT:-https://api.sixtyfour.ai}"
+```
 
-curl -X POST "$API_URL/people-intelligence" \
+## People Intelligence
+
+Research a person and return any fields you define. `fields` is fully flexible — describe any fields and the AI research agent will find them.
+
+### POST /v1/people/intelligence
+
+```bash
+curl -X POST "$API_URL/v1/people/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "lead_info": {
-      "full_name": "Jane Doe",
+    "person": {
+      "name": "Jane Doe",
       "company": "Acme Corp",
       "linkedin_url": "https://linkedin.com/in/janedoe"
     },
-    "struct": {
+    "tier": "low",
+    "fields": {
       "title": "Current job title",
-      "years_experience": "Total years of professional experience",
-      "skills": "Key technical skills"
+      "years_experience": {"type": "int", "description": "Total years of professional experience"},
+      "skills": {"type": "list[str]", "description": "Key technical skills"}
     },
-    "tier": "low"
+    "wait_seconds": 20
   }'
 ```
 
-**lead_info** — provide as many identifiers as possible for better matching:
-- `full_name`, `first_name`, `last_name`
-- `company`, `company_domain`
-- `linkedin_url`, `email`
+Send exactly one of `person`, `people` or `input_file_id`.
 
-**struct** — dict of `field_name: description`. The description guides the AI agent — be specific about what you want. There is no fixed schema; define any fields that make sense for your use case.
+**person** — any attributes you know; more gives better matching: `name`, `company`, `email`, `linkedin_url`, `location`.
 
-**tier** — controls research depth:
-- `micro`: Fastest, cheapest — single structured source lookup. Use for simple fields on well-indexed subjects. Lower coverage than `low`.
-- `low` (default): Fast single-pass across well-indexed public sources. Good for standard fields (title, company, LinkedIn) with clear online presence.
+**people** — 1 to 100,000 person objects. Set `custom_id` on each record to match results to your own rows.
+
+**input_file_id** — the `file_id` of an uploaded file of people (see [Files](#files)).
+
+**fields** (required) — `field_name: description`, or `field_name: {"type", "description"}`. The description guides the agent — be specific about what you want ("The person's primary work email", not "email").
+
+**tier** (required) — controls research depth:
+- `micro`: Fastest, cheapest lookup. Up to 10 simple fields on well-indexed subjects. Lower coverage than `low`.
+- `low`: Fast single-pass across well-indexed public sources. Good for standard fields (title, company, LinkedIn) with clear online presence.
 - `medium`: Multi-source deep research with cross-referencing. Use when `low` comes back incomplete, subject is hard to find, or task needs higher confidence.
-- `high`: Exhaustive OSINT-grade investigation — no time limit. Use for AML, KYC/KYB, fraud, due diligence. Requires enterprise access — if 403, direct user to https://cal.com/team/sixtyfour/discovery
+- `high`: Exhaustive OSINT-grade investigation. Use for AML, KYC/KYB, fraud, due diligence. Available on request — if 403, direct user to https://cal.com/team/sixtyfour/discovery
 
 **research_plan** (optional): A string guiding the research strategy (e.g. "Focus on public filings and press mentions").
 
-**Response:**
+**webhook_url** (optional): HTTPS URL to notify when the Job finishes.
+
+**Response:** a Job. When `status` is `succeeded`, read the rows:
+
+```bash
+curl "$API_URL/v1/jobs/$JOB_ID/items?page_size=100" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
 ```json
 {
-  "structured_data": {"title": "VP Engineering", "years_experience": "12", ...},
-  "notes": "Research notes with source details...",
-  "references": {"https://linkedin.com/in/janedoe": "LinkedIn profile"},
-  "confidence_score": 8.5
+  "items": [
+    {
+      "index": 0,
+      "custom_id": null,
+      "input": {"name": "Jane Doe", "company": "Acme Corp"},
+      "status": "succeeded",
+      "result": {
+        "name": "Jane Doe",
+        "company": "Acme Corp",
+        "title": "VP Engineering",
+        "years_experience": 12,
+        "skills": ["Python", "Postgres"],
+        "enrichment_references": {"https://linkedin.com/in/janedoe": "LinkedIn profile"},
+        "enrichment_confidence_score": 9
+      },
+      "error": null
+    }
+  ],
+  "next_cursor": null
 }
 ```
 
-### POST /people-intelligence-async
+Pass `next_cursor` back as `cursor` until it is null. A finished batch can contain failed items; check each item's `status`.
 
-Same parameters. Returns immediately with a job ID:
-```json
-{"task_id": "job_abc123", "status": "queued"}
-```
-
-Poll with: `python3 scripts/poll_job.py enrichment job_abc123 --timeout 900`
-
-Or manually: `GET /job-status/{task_id}`
+Or wait with the script: `python3 scripts/poll_job.py JOB_ID --output /tmp/people.csv`
 
 
 ## Company Intelligence
 
-### POST /company-intelligence (sync)
+### POST /v1/companies/intelligence
 
 ```bash
-curl -X POST "$API_URL/company-intelligence" \
+curl -X POST "$API_URL/v1/companies/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_company": {
-      "company_name": "Stripe",
-      "website": "stripe.com"
-    },
-    "struct": {
+    "company": {"name": "Stripe", "website": "stripe.com"},
+    "tier": "low",
+    "fields": {
       "revenue_estimate": "Estimated annual revenue in USD",
-      "employee_count": "Total number of employees",
+      "employee_count": {"type": "int", "description": "Total number of employees"},
       "funding_total": "Total funding raised",
       "tech_stack": "Key technologies used"
     },
     "find_people": true,
     "people_focus_prompt": "C-suite executives and VP-level leaders",
-    "tier": "low"
+    "wait_seconds": 20
   }'
 ```
 
-**target_company**: `company_name` (required), plus optional `website`, `linkedin_url`, `domain`.
+Send exactly one of `company`, `companies` (up to 100,000) or `input_file_id`.
 
-**find_people**: Discover associated people at the company.
+**find_people**: Discover people at the company. They come back in the item's `result.leads` (`name`, `title`, `company`, `email`, `phone`, `linkedin`, `location`, `score`).
 
-**full_org_chart**: Get department-grouped org chart.
+**people_focus_prompt**: Which people to find (e.g. "engineering leadership").
 
-**people_focus_prompt**: Filter which people to find (e.g. "engineering leadership").
+**tier**, **fields**, **research_plan**, **webhook_url**: same as people intelligence.
 
-**lead_struct**: Custom schema for discovered people (same format as `struct`).
-
-**tier**: Same options as people intelligence (`micro`, `low`, `medium`, `high`).
-
-### POST /company-intelligence-async
-
-Same parameters → poll with `GET /job-status/{task_id}`
+Read results from `GET /v1/jobs/{job_id}/items`, as above.
 
 
-## Bulk Intelligence
+## Files
 
-For running full people/company intelligence (the `struct`-based research agent, not just email/phone) across many records in one call, upload a file instead of building a workflow.
-
-### POST /bulk-intelligence/people
+Upload a CSV, JSON or NDJSON file once and use its `file_id` as `input_file_id` on contacts, reverse lookup or intelligence requests:
 
 ```bash
-curl -X POST "$API_URL/bulk-intelligence/people" \
+FILE_ID=$(curl -sS "$API_URL/v1/files" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -F "file=@leads.csv;type=text/csv" \
-  -F 'config={"struct":{"title":"Current job title","seniority":"Seniority level"},"tier":"low"};type=application/json'
-```
+  -F "file=@leads.csv;type=text/csv" | jq -r .file_id)
 
-- **file**: CSV, JSON, JSONL, or NDJSON — max 100 MB / 100,000 rows.
-- **config**: JSON-encoded string (not a nested object) with:
-  - `struct` (required) — same field-description format as `/people-intelligence`
-  - `tier` — same options as people intelligence (`micro`, `low`, `medium`, `high`)
-  - `research_plan`, `field_confidence`, `columns` (subset of uploaded columns to use), `webhook_url` (HTTPS callback on completion), `save_json`
-
-**Response:** `{"task_id": "...", "status": "RUNNING", "row_count": 500, "estimated_cost_cents": 2500}`
-
-Poll with: `python3 scripts/poll_job.py enrichment TASK_ID --timeout 3600`. On completion, `GET /job-status/{task_id}` includes signed download links and `charge_amount` (total cents actually charged). Row-level failures pass through un-enriched rather than failing the whole run.
-
-### POST /bulk-intelligence/company
-
-Same shape, config uses `CompanyBulkIntelligenceConfig`:
-
-```bash
-curl -X POST "$API_URL/bulk-intelligence/company" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -F "file=@companies.csv;type=text/csv" \
-  -F 'config={"struct":{"revenue_estimate":"Estimated annual revenue"},"find_people":true,"people_focus_prompt":"VP Sales, Head of Sales","tier":"low"};type=application/json'
-```
-
-Additional `config` fields: `find_people`, `people_focus_prompt`, `lead_struct` (schema for discovered people), `full_org_chart`.
-
-**When to use bulk vs. workflows:** Use bulk intelligence when you just need one enrichment pass over a file (fastest path, no workflow to build/maintain). Use a workflow when you need multiple chained steps — e.g. search → enrich → find_email → filter → notebook.
-
-
-## Find Email
-
-Discover professional or personal email addresses for leads for sales outreach, CRM enrichment, or lead qualification. Use this for any email request instead of an `email` field in a people intelligence `struct`.
-
-### POST /find-email
-
-```bash
-curl -X POST "$API_URL/find-email" \
+curl -X POST "$API_URL/v1/people/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"lead": {"name": "Jane Doe", "company": "Acme Corp"}}'
+  -d "{\"input_file_id\": \"$FILE_ID\", \"tier\": \"low\", \"fields\": {\"title\": \"Current job title\"}, \"wait_seconds\": 0}"
 ```
 
-**Response:**
+`GET /v1/files/{file_id}` returns the file's metadata and a signed `download_url` that is valid for 15 minutes; read the file again to refresh it.
+
+**When to use a batch vs. workflows:** Use a batch when you need one enrichment pass over a file or list (fastest path, no workflow to build/maintain). Use a workflow when you need multiple chained steps — e.g. search → enrich → find_email → filter → notebook.
+
+
+## Find Contacts
+
+Find work emails, personal emails and phone numbers for leads for sales outreach, CRM enrichment, or lead qualification. Use this for any email or phone request instead of a field in people intelligence `fields`.
+
+### POST /v1/people/contacts
+
+```bash
+curl -X POST "$API_URL/v1/people/contacts" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "person": {"name": "Jane Doe", "company": "Acme Corp"},
+    "find": ["work_email", "phone"],
+    "wait_seconds": 20
+  }'
+```
+
+**find** (required): 1 to 3 of `work_email`, `personal_email`, `phone`.
+
+**verify_emails** (optional, default `true`): if `false`, returns the first address with `UNKNOWN` status.
+
+Send exactly one of `person`, `people` (up to 100,000) or `input_file_id`.
+
+**Response** — a Job. For a single person, the finished Job carries the answer in `result`:
+
 ```json
 {
-  "name": "Jane Doe",
-  "company": "Acme Corp",
-  "email": [["jane@acme.com", "OK", "COMPANY"]],
-  "cost_cents": 5
+  "job_id": "job_e07337e2-...",
+  "status": "succeeded",
+  "operation": "people.contacts",
+  "counts": {"total": 1, "succeeded": 1, "failed": 0, "pending": 0},
+  "charge_credits": 0.5,
+  "result": {
+    "name": "Jane Doe",
+    "company": "Acme Corp",
+    "email": "jane@acme.com",
+    "email_status": "OK",
+    "email_type": "COMPANY",
+    "other_emails": [],
+    "phone": "+15551234567"
+  }
 }
 ```
 
-Email array format: `[address, verification_status, type]`
-- **Status**: `OK`, `CATCH_ALL`, `RISKY`, `INVALID`
-- **Type**: `COMPANY`, `PERSONAL`
+- **Email status**: `OK` (verified), `RISKY` (domain accepts all mail), `INVALID`, `UNKNOWN`, `NOT_FOUND`
+- Personal emails come back as `personal_email`, `personal_email_status`, `personal_email_type`.
+- A missing email or phone is an empty string. `NOT_FOUND` describes the answer; the Job still `succeeded`.
 
-**mode** (optional): `"PROFESSIONAL"` (default) or `"PERSONAL"`
-
-### Bulk and async variants
-
-- `POST /find-email-bulk` — array of `leads` (up to 100), returns array of results
-- `POST /find-email-async` — returns `task_id`, poll with `GET /job-status/{task_id}`
-- `POST /find-email-bulk-async` — bulk + async combined
+For `people` or `input_file_id`, read rows from `GET /v1/jobs/{job_id}/items`.
 
 
-## Find Phone
+## Reverse Lookup
 
-Discover phone numbers for leads for sales outreach, CRM enrichment, or lead qualification. Use this for any phone request instead of a `phone` field in a people intelligence `struct`.
+### POST /v1/people/contacts/reverse
 
-### POST /find-phone
+Given an email or a phone number, find who it belongs to. Send exactly one of `email` or `phone`:
 
 ```bash
-curl -X POST "$API_URL/find-phone" \
+curl -X POST "$API_URL/v1/people/contacts/reverse" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"lead": {"name": "Jane Doe", "company": "Acme Corp"}}'
+  -d '{"email": "jane@acme.com", "wait_seconds": 20}'
+
+curl -X POST "$API_URL/v1/people/contacts/reverse" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"phone": "+15551234567", "wait_seconds": 20}'
 ```
 
-**Response:** `{"name": "...", "company": "...", "phone": "+1 555-123-4567", "cost_cents": 30}`
-
-Bulk and async variants: `/find-phone-bulk`, `/find-phone-async`, `/find-phone-bulk-async`
+A finished single lookup carries the profile in `result` (`firstname`, `lastname`, `title`, `linkedin_url`, `location`, `company_name`, `company_domain`, ...). For many lookups, send `items` (up to 100,000, one contact type per request) or `input_file_id`, and read `GET /v1/jobs/{job_id}/items`.
 
 
-## Reverse Lookups
+## Verify Email
 
-### POST /reverse-email
-
-Given an email, find who it belongs to:
+### POST /v1/verify/emails
 
 ```bash
-curl -X POST "$API_URL/reverse-email" \
+curl -X POST "$API_URL/v1/verify/emails" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"email": "jane@acme.com"}'
 ```
 
-### POST /reverse-phone
+**Response** (returned directly, not a Job): `{"email": "jane@acme.com", "status": "valid", "score": 100}`
 
-Given a phone number, find who it belongs to:
-
-```bash
-curl -X POST "$API_URL/reverse-phone" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"phone": "+15551234567"}'
-```
-
-Bulk and async variants available for both.
-
-
-## Enrich LinkedIn Profile
-
-### POST /enrich-linkedin
-
-Fetch a LinkedIn profile (or company page) and extract structured fields in a single call — cheaper and faster than `/people-intelligence` when you already have the LinkedIn URL and don't need broader web research.
-
-```bash
-curl -X POST "$API_URL/enrich-linkedin" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "linkedin_url": "https://linkedin.com/in/janedoe",
-    "struct": {
-      "title": "Current job title",
-      "years_at_company": "How long they have been at their current company"
-    }
-  }'
-```
-
-`struct` is optional — omit it for a default profile extraction. Accepts both personal and company profile URLs.
-
-
-## Struct Builder
-
-### POST /struct-builder/generate
-
-Not sure what fields to put in `struct`? Describe what you want in plain English and get back a field list to use as your `struct`.
-
-```bash
-curl -X POST "$API_URL/struct-builder/generate" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "description": "I need to qualify sales leads: their seniority, whether they have budget authority, and team size",
-    "block_type": "lead_enrichment"
-  }'
-```
-
-**Response:** `{"struct": [{"name": "field_name", "description": "...", "type": "str"}, ...]}`
-
-The response is an array. Intelligence endpoints (`/people-intelligence`, `/company-intelligence`, `/bulk-intelligence/*`) expect `struct` as a plain dict. Convert before use:
-
-```python
-struct = {item["name"]: item["description"] for item in response["struct"]}
-```
-
-`block_type` (optional) tailors output to the target context: `lead_enrichment`, `company_enrichment`, `linkedin_enrichment`, `research_agent`, `webhook`, `transform_data`. Pass `existing_struct` to extend an existing struct rather than starting fresh.
+`status` is lowercase here: `valid`, `risky`, `invalid` or `unknown`.
 
 
 ## Account
 
-### GET /check-balance
+### GET /v1/balance
 
 Check the org's current credit balance before running a large job:
 
 ```bash
-curl "$API_URL/check-balance" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/balance" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
 **Response:** `{"credits": 4820.5}`
 
 
-## QA Agent
-
-### POST /qa-agent
-
-Evaluate and qualify data against criteria using autonomous research:
-
-```bash
-curl -X POST "$API_URL/qa-agent" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "lead_info": {"full_name": "Jane Doe", "company": "Acme Corp"},
-    "criteria": "Is this person a decision-maker in engineering with budget authority?"
-  }'
-```
-
-Async variant: `POST /qa-agent-async` → poll with `GET /job-status/{task_id}`
-
-
 ## Age Verification
 
-Establish a person's date of birth (or a grounded age estimate) from open-source research, with per-field confidence and sourced evidence. Use for trust-and-safety, KYC, and due-diligence workflows where self-reported age isn't enough. Async-only — there is no sync variant.
+Establish a person's date of birth (or a grounded age estimate) from open-source research, with confidence scores and sourced evidence. Use for trust-and-safety, KYC, and due-diligence workflows where self-reported age isn't enough.
 
-### POST /verify-age (start)
+### POST /v1/people/age-verification
 
 ```bash
-curl -X POST "$API_URL/verify-age" \
+curl -X POST "$API_URL/v1/people/age-verification" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "subject": {
+    "person": {
       "name": "Jane Doe",
       "company": "Acme Corp",
       "linkedin": "https://www.linkedin.com/in/janedoe"
-    }
+    },
+    "wait_seconds": 0
   }'
 ```
 
-**subject** — any identifiers you have (name, company, linkedin, email, location, etc.); more is better. `lead_info` and `input` are accepted as aliases for `subject`, so callers already integrated with People Intelligence can reuse the same request shape.
+**person** — any identifiers you have (name, company, linkedin, email, location, etc.); more is better.
 
-**Response:** `{"task_id": "job_abc123", "status": "RUNNING"}`
+A verification takes minutes, so the response is a running Job. Poll it: `python3 scripts/poll_job.py JOB_ID`
 
-### GET /verify-age/{task_id} (poll)
-
-```bash
-curl "$API_URL/verify-age/$TASK_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
-```
-
-Or use the polling script: `python3 scripts/poll_job.py age-verify TASK_ID`
-
-Status values: `running`, `completed`, `failed`, `cancelled`, `terminated`, `timed_out`.
-
-**Response once `completed`:**
+**`result` once the Job is `succeeded`:**
 ```json
 {
-  "status": "completed",
-  "date_of_birth": {"day": 14, "month": 3, "year": 1990, "confidence": 8},
-  "age": {"value": 36, "as_of": "2026-07-31", "confidence": 8},
+  "date_of_birth": {"day": 14, "month": 3, "year": 1990, "confidence": 82},
+  "age": {"value": 36, "as_of": "2026-07-31", "confidence": 80},
   "evidence": "Summary of what evidence established the date of birth or age.",
   "sources": ["https://..."]
 }
 ```
 
-Each `date_of_birth` component (`day`/`month`/`year`) is individually gated on evidence — it's `null` unless established from a concrete source (never guessed). `age.value` may still be populated as a grounded estimate even when the exact date of birth isn't fully known.
+Each `date_of_birth` component (`day`/`month`/`year`) is `null` unless a concrete source establishes it (never guessed). `age.value` may still be populated as a grounded estimate even when the exact date of birth isn't fully known. Confidence is 0 to 100.
 
-**Pricing:** billed at the same rate as the `high` tier of People Intelligence, but unlike calling `/people-intelligence` with `tier: "high"` directly, Age Verification does **not** require enterprise/high-tier approval — it's available to any paying org.
+Age Verification needs no tier access: any organization with credits can call it.
 
 
 ## Tiers and access
 
-The `tier` parameter controls research depth across all intelligence endpoints (people, company, and bulk). Full descriptions are in the main SKILL.md. Summary:
+`tier` is required on every intelligence request. Full descriptions are in the main SKILL.md. Summary:
 
 | Tier | When to use | Access |
 |------|-------------|--------|
-| `micro` | Fastest, lowest cost — single structured source lookup only. Use when speed and cost are critical and fields are very simple (e.g. just a title or company for a known person). Expect lower coverage than `low`. | All plans |
-| `low` | Standard fields, clear online presence, high-volume enrichment | All plans |
-| `medium` | Incomplete low results, common names, niche profiles, fields requiring synthesis | All plans |
-| `high` | AML, KYC/KYB, fraud, due diligence, background checks — exhaustive, no time cap | Enterprise only |
+| `micro` | Fastest, lowest cost. Use when speed and cost are critical and fields are very simple (e.g. just a title or company for a known person). Expect lower coverage than `low`. | All organizations |
+| `low` | Standard fields, clear online presence, high-volume enrichment | All organizations |
+| `medium` | Incomplete low results, common names, niche profiles, fields requiring synthesis | All organizations |
+| `high` | AML, KYC/KYB, fraud, due diligence, background checks — exhaustive | On request |
 
 Start with `low`. If results are incomplete or the task demands higher confidence, use `medium`. Use `high` only for investigative and compliance workflows where thoroughness outweighs speed.
 
-If a `high` tier request returns a 403, the user needs enterprise access. Direct them to book a call: https://cal.com/team/sixtyfour/discovery
+If a `high` tier request returns a 403, the user needs access. Direct them to book a call: https://cal.com/team/sixtyfour/discovery
 
-For `high` tier, prefer the async endpoint (`POST /people-intelligence-async`) with the polling script, since investigations can run for extended periods.
+For `medium` and `high`, send `"wait_seconds": 0` and use the polling script, since investigations can run for extended periods.
 
 
 ## Typical response times
 
-The API will always return a response — no client-side timeouts needed.
+`wait_seconds` tops out at 20, so anything slower returns a running Job to poll.
 
 | Endpoint | Tier | Typical time |
 |----------|------|-------------|
-| find-email, find-phone | — | 2-10s |
-| reverse-email, reverse-phone | — | 2-10s |
-| people/company-intelligence | low | 10-60s |
-| people/company-intelligence | medium | 30-180s |
-| people/company-intelligence | high | minutes (no cap — agent investigates until done) |
-| qa-agent | — | 30-180s |
-| verify-age | — | minutes (OSINT-grade research, no time cap) |
+| contacts, reverse lookup | — | 2-10s |
+| people/company intelligence | low | 10-60s |
+| people/company intelligence | medium | 30-180s |
+| people/company intelligence | high | minutes |
+| age verification | — | minutes |
 
 
-## Legacy endpoints — do not use
+## Original routes — do not use for new code
 
-The spec still lists older endpoints kept for backward compatibility. Always prefer the ones documented above:
+Unversioned routes (`/find-email`, `/people-intelligence`, `/job-status/{task_id}`, `/verify-age`, ...) and the `/v1/find-email`-style aliases keep working for existing integrations, with their original bodies and status names. Always write new code against the routes above. If a stale example references an original route, find its replacement in the route table:
 
-| Legacy (don't use) | Use instead |
-|---------------------|-------------|
-| `/enrich-lead`, `/enrich-lead-async` | `/people-intelligence` (`-async`) |
-| `/enrich-company*`, `/enrich-company-v2*` | `/company-intelligence` (`-async`) |
-| `/find-email-v2*`, `/find-phone-v2*` | `/find-email*`, `/find-phone*` (non-v2) |
-| `/get-linkedin` | `/enrich-linkedin` |
-| `/research-agent`, `/research-agent-async` | `people-intelligence`/`company-intelligence`, or the `research_agent` workflow block |
-
-If a stale example references one of these paths, redirect to its replacement.
+```bash
+curl -s "https://docs.sixtyfour.ai/api-reference/legacy.md"
+```

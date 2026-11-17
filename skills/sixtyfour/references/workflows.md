@@ -29,18 +29,18 @@ Common mistake:
 
 ## Creating a workflow
 
-### POST /workflows/create_workflow
+### POST /v1/workflows
 
 ```bash
 API_URL="${SIXTYFOUR_API_ENDPOINT:-https://api.sixtyfour.ai}"
 
-curl -X POST "$API_URL/workflows/create_workflow" \
+curl -X POST "$API_URL/v1/workflows" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_name": "Lead Enrichment",
-    "workflow_description": "Enrich leads with emails and company data",
-    "workflow_definition": {
+    "name": "Lead Enrichment",
+    "description": "Enrich leads with emails and company data",
+    "definition": {
       "blocks": [
         {"sequence_number": 1, "block_name": "webhook", "block_type": "webhook", "block_id": "input", "specs": {}},
         {"sequence_number": 2, "block_name": "find_email", "block_type": "find_email", "block_id": "emails", "specs": {"mode": "PROFESSIONAL"}},
@@ -54,37 +54,48 @@ curl -X POST "$API_URL/workflows/create_workflow" \
   }'
 ```
 
-API-triggered workflows **must** start with a `webhook` block.
+The response includes the `workflow_id`. Workflows you pass rows to **must** start with a `webhook` block.
 
 ### Running a workflow
 
 ```bash
-curl -X POST "$API_URL/workflows/run?workflow_id=WF_ID" \
+curl -X POST "$API_URL/v1/workflows/WORKFLOW_ID/runs" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"webhook_payload": [
+  -d '{"input": [
     {"full_name": "Jane Doe", "company": "Acme Corp"},
     {"full_name": "John Smith", "company": "Globex Inc"}
   ]}'
 ```
 
-Returns: `{"job_id": "run_xyz", "status": "queued"}`
+Returns a Job: `{"job_id": "job_...", "status": "queued", "operation": "workflows.run", ...}`
+
+- `input` — rows to run on, for workflows that start with a `webhook` block.
+- `source_overrides` — settings to change on the first block for this run only. For a Read CSV source, upload the file to `POST /v1/files` and pass `{"resource_handle_id": "FILE_ID"}`.
+- `result_formats` — file formats to save, such as `["csv", "ndjson"]`. Default: `csv`.
+- Send an `Idempotency-Key` header so a retried start does not run twice.
 
 ### Polling and downloading
 
 ```bash
-python3 scripts/poll_job.py workflow run_xyz --timeout 1800 --output /tmp/results.csv
+python3 scripts/poll_job.py JOB_ID --timeout 1800 --output /tmp/results.csv
 ```
 
 Or manually:
 
 ```bash
-# Poll status
-curl "$API_URL/workflows/runs/run_xyz/live_status" -H "x-api-key: $SIXTYFOUR_API_KEY"
-
-# Download results (after completion)
-curl "$API_URL/workflows/runs/run_xyz/results/download-links" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/jobs/JOB_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
+
+When `status` is `succeeded`, `result` lists the output files, each with a signed `download_url` (valid 15 minutes; read the Job again to refresh):
+
+```json
+"result": [
+  {"filename": "results.csv", "content_type": "text/csv", "row_count": 2, "block_number": 3, "download_url": "https://api.sixtyfour.ai/storage/download/...", "download_expires_in_seconds": 900}
+]
+```
+
+A `succeeded` run can include failed rows. A `failed` or `canceled` Job has no `result`.
 
 
 ## Block reference
@@ -92,7 +103,7 @@ curl "$API_URL/workflows/runs/run_xyz/results/download-links" -H "x-api-key: $SI
 ### Discover all blocks
 
 ```bash
-curl "$API_URL/workflows/blocks" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/workflows/blocks" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
 Returns all block types with their specs schemas.
@@ -201,42 +212,43 @@ Operators: `equals`, `not_equals`, `contains`, `not_contains`, `greater`, `less`
 ## Workflow management
 
 ```bash
-# List all workflows
-curl "$API_URL/workflows" -H "x-api-key: $SIXTYFOUR_API_KEY"
+# List workflows (page_size, cursor -> items, next_cursor)
+curl "$API_URL/v1/workflows" -H "x-api-key: $SIXTYFOUR_API_KEY"
 
 # Get workflow details
-curl "$API_URL/workflows/WF_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/workflows/WORKFLOW_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 
-# Update a workflow (upsert)
-curl -X POST "$API_URL/workflows/update_workflow?workflow_id=WF_ID" \
+# Update a workflow (send only what changes)
+curl -X PATCH "$API_URL/v1/workflows/WORKFLOW_ID" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"workflow_name": "Updated Name"}'
+  -d '{"name": "Updated Name"}'
 
 # Delete a workflow
-curl -X POST "$API_URL/workflows/delete_workflow?workflow_id=WF_ID" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl -X DELETE "$API_URL/v1/workflows/WORKFLOW_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+
+# List a workflow's runs
+curl "$API_URL/v1/jobs?workflow_id=WORKFLOW_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 
 # Cancel a running workflow
-curl -X POST "$API_URL/workflows/cancel?job_id=RUN_ID" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl -X POST "$API_URL/v1/jobs/JOB_ID/cancel" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
 
 ## Scheduling workflows
 
-Trigger a workflow on a recurring cadence without polling or external cron infrastructure. A schedule binds a `workflow_id` to a `cron_expression` and `timezone`. The workflow must already exist and (for API-triggered workflows) start with a `webhook` block.
+Trigger a workflow on a recurring cadence without polling or external cron infrastructure. A schedule binds a `workflow_id` to a `cron_expression` and `timezone`. The workflow must already exist and (to receive rows) start with a `webhook` block.
 
 A schedule is bound to the creating user or API key — if that entity loses access to the org, the schedule is automatically paused and `disabled_reason` is set on the response. Scheduled runs are billed the same as manual runs.
 
-### POST /schedules (create)
+### POST /v1/schedules (create)
 
 ```bash
-curl -X POST "$API_URL/schedules" \
+curl -X POST "$API_URL/v1/schedules" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "workflow_id": "WF_ID",
+    "workflow_id": "WORKFLOW_ID",
     "name": "Daily lead refresh",
     "cron_expression": "0 9 * * *",
     "timezone": "America/New_York",
@@ -253,37 +265,37 @@ curl -X POST "$API_URL/schedules" \
 | description | no | Free-form text |
 | is_active | no | Defaults to `true`. Set `false` to save without activating |
 
-**Response** (`ScheduleResponse`): `id`, `workflow_id`, `name`, `description`, `cron_expression`, `timezone`, `is_active`, `disabled_reason`, `created_by`, `next_run_times` (array of upcoming ISO timestamps), `created_at`, `updated_at`.
+**Response**: `schedule_id`, `workflow_id`, `name`, `description`, `cron_expression`, `timezone`, `is_active`, `disabled_reason`, `next_run_times` (array of upcoming ISO timestamps), `created_at`, `updated_at`.
 
-### GET /schedules (list)
-
-```bash
-curl "$API_URL/schedules" -H "x-api-key: $SIXTYFOUR_API_KEY"
-# Optional: filter to one workflow
-curl "$API_URL/schedules?workflow_id=WF_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
-```
-
-### GET /schedules/{schedule_id} (get one)
+### GET /v1/schedules (list)
 
 ```bash
-curl "$API_URL/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/schedules" -H "x-api-key: $SIXTYFOUR_API_KEY"
+# Returns items and next_cursor. Optional: filter to one workflow
+curl "$API_URL/v1/schedules?workflow_id=WORKFLOW_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
-### PATCH /schedules/{schedule_id} (update)
+### GET /v1/schedules/{schedule_id} (get one)
+
+```bash
+curl "$API_URL/v1/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+```
+
+### PATCH /v1/schedules/{schedule_id} (update)
 
 All fields optional — only send what changes. Reactivating a paused/auto-disabled schedule re-binds it to the caller and clears `disabled_reason`.
 
 ```bash
-curl -X PATCH "$API_URL/schedules/SCHEDULE_ID" \
+curl -X PATCH "$API_URL/v1/schedules/SCHEDULE_ID" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"is_active": false}'
 ```
 
-### DELETE /schedules/{schedule_id} (delete)
+### DELETE /v1/schedules/{schedule_id} (delete)
 
 ```bash
-curl -X DELETE "$API_URL/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl -X DELETE "$API_URL/v1/schedules/SCHEDULE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
 Deleting a schedule does not affect the underlying workflow or its run history.
@@ -296,5 +308,5 @@ Deleting a schedule does not affect the underlying workflow or its run history.
 - One enrichment block with multiple `return_fields` is better than multiple enrichment blocks
 - `search` queries should use specific company/role names, not vague categories
 - Workflows with `search` blocks use `auto_execute: true` to run the search at creation time
-- Workflows with `webhook` blocks are for API-triggered batch processing
-- Use `GET /workflows/blocks` to discover all available blocks and their specs schemas
+- Workflows with `webhook` blocks take their rows from `input` on each run
+- Use `GET /v1/workflows/blocks` to discover all available blocks and their specs schemas
