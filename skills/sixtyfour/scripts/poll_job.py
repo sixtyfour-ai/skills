@@ -83,8 +83,10 @@ def save_results(job, output, api_key, base_url, deadline):
             _log({"result": "downloaded", "path": path, "rows": item.get("row_count"), "filename": item.get("filename")})
         return 0
 
-    export = _request("POST", "/v1/exports", api_key, base_url, {"from": {"job_id": job["job_id"]}, "format": "csv"})
-    export = poll(export["job_id"], api_key, base_url, deadline)
+    export = job
+    if job.get("operation") != "exports.create":
+        export = _request("POST", "/v1/exports", api_key, base_url, {"from": {"job_id": job["job_id"]}, "format": "csv"})
+        export = poll(export["job_id"], api_key, base_url, deadline)
     if not export or export["status"] != "succeeded":
         _log({"result": "export_failed", "detail": export})
         return 1
