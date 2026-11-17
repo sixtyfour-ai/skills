@@ -115,18 +115,13 @@ Returns all block types with their specs schemas.
 {"block_type": "webhook", "specs": {}}
 ```
 
-**search** — run a search as the first step:
+**read_csv** — read rows from an uploaded file:
 ```json
-{"block_type": "search", "specs": {
-  "query": "Software Engineers at Google in San Francisco",
-  "dataframe_type": "LEAD",
-  "max_results": 500,
-  "auto_execute": true
-}}
+{"block_type": "read_csv", "specs": {"dataframe_type": "LEAD"}}
 ```
 - `dataframe_type`: `"LEAD"` or `"COMPANY"`
-- `auto_execute: true` runs the search at workflow creation time
-- Use specific company/role names, not vague categories
+- Upload the file to `POST /v1/files` and pass its `file_id` as `source_overrides.resource_handle_id` when you start the run
+- To start from a search, run the search first (`POST /v1/people/search` or `/v1/companies/search`), download its CSV and upload that file. A workflow created through the API does not run a search itself.
 
 ### Enrichment blocks
 
@@ -197,7 +192,7 @@ Operators: `equals`, `not_equals`, `contains`, `not_contains`, `greater`, `less`
 
 ### All available block categories
 
-- **Input**: webhook, read_notebook, search
+- **Input**: webhook, read_csv, read_notebook
 - **Enrichment**: company_enrichment, lead_enrichment, find_email, find_phone, verify_email, reverse_email, reverse_phone
 - **Discovery**: company_to_leads, leads_to_company, github_find_people, google_maps_search
 - **Web**: scrape_web, backlinks_referring_domains, find_subdomains
@@ -306,7 +301,6 @@ Deleting a schedule does not affect the underlying workflow or its run history.
 - Add `filter` blocks BEFORE enrichment to reduce credit usage (enrich only the rows you need)
 - Use `deduplicate` to remove duplicates before enrichment
 - One enrichment block with multiple `return_fields` is better than multiple enrichment blocks
-- `search` queries should use specific company/role names, not vague categories
-- Workflows with `search` blocks use `auto_execute: true` to run the search at creation time
+- Workflows with `read_csv` blocks take their rows from the file in `source_overrides.resource_handle_id` on each run
 - Workflows with `webhook` blocks take their rows from `input` on each run
 - Use `GET /v1/workflows/blocks` to discover all available blocks and their specs schemas

@@ -71,7 +71,7 @@ python3 scripts/poll_job.py JOB_ID --output /tmp/vp_sales.csv
 
 ### Step 3: Use the results
 
-Read the CSV and summarize it for the user. For emails or deeper fields on these people, pass the search Job to a workflow or send the rows as `people` to `/v1/people/contacts` or `/v1/people/intelligence`.
+Read the CSV and summarize it for the user. For emails or deeper fields on these people, upload the CSV as a workflow's input (example 5) or send the rows as `people` to `/v1/people/contacts` or `/v1/people/intelligence`.
 
 ---
 
@@ -118,7 +118,28 @@ python3 scripts/poll_job.py JOB_ID --output /tmp/companies.csv
 
 **User**: "Find engineering managers at top AI startups and get their emails and LinkedIn profiles"
 
-### Step 1: Create the workflow
+### Step 1: Run the search and download the results
+
+A workflow does not run a search itself. Run the search first, as in example 3:
+
+```bash
+curl -s -X POST "$API_URL/v1/people/search" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Engineering Manager at OpenAI, Anthropic, Cohere, Mistral, Databricks, Scale AI, Hugging Face", "max_results": 300, "wait_seconds": 0}'
+
+python3 scripts/poll_job.py JOB_ID --output /tmp/eng_managers.csv
+```
+
+### Step 2: Upload the results as the workflow's input
+
+```bash
+FILE_ID=$(curl -sS "$API_URL/v1/files" \
+  -H "x-api-key: $SIXTYFOUR_API_KEY" \
+  -F "file=@/tmp/eng_managers.csv;type=text/csv" | jq -r .file_id)
+```
+
+### Step 3: Create the workflow
 
 ```bash
 curl -s -X POST "$API_URL/v1/workflows" \
@@ -130,8 +151,8 @@ curl -s -X POST "$API_URL/v1/workflows" \
     "definition": {
       "blocks": [
         {
-          "sequence_number": 1, "block_name": "search", "block_type": "search", "block_id": "source",
-          "specs": {"query": "Engineering Manager at OpenAI, Anthropic, Cohere, Mistral, Databricks, Scale AI, Hugging Face", "dataframe_type": "LEAD", "max_results": 300, "auto_execute": true}
+          "sequence_number": 1, "block_name": "read_csv", "block_type": "read_csv", "block_id": "source",
+          "specs": {"dataframe_type": "LEAD"}
         },
         {
           "sequence_number": 2, "block_name": "deduplicate", "block_type": "deduplicate", "block_id": "dedup",
@@ -171,18 +192,18 @@ curl -s -X POST "$API_URL/v1/workflows" \
 
 Read `workflow_id` from the response.
 
-### Step 2: Run the workflow
+### Step 4: Run the workflow on the uploaded file
 
 ```bash
 curl -s -X POST "$API_URL/v1/workflows/WORKFLOW_ID/runs" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d "{\"source_overrides\": {\"resource_handle_id\": \"$FILE_ID\"}}"
 ```
 
-The response is a Job. This workflow's source is a search block, so the run needs no `input`.
+The response is a Job. Start the run once: creating the workflow does not run it, and each run is charged.
 
-### Step 3: Poll and download
+### Step 5: Poll and download
 
 ```bash
 python3 scripts/poll_job.py JOB_ID --timeout 1800 --output /tmp/ai_eng_managers.csv
