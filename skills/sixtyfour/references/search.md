@@ -1,116 +1,103 @@
 # Search API Reference
 
-Two search modes: **Deep Search** (natural language, agentic — async, poll for results) and **Filter Search** (structured queries — use `POST /search/query` for a synchronous response, or `POST /search/start-filter-search` for the async variant).
+One route per record type finds people or companies: `POST /v1/people/search` and `POST /v1/companies/search`. Each start takes exactly one of:
 
-## Deep Search
+- `query` — natural language, agentic search
+- `filters` — structured, field-level filters
+- `seeds` — example people to find lookalikes for (people search only, up to 1,000)
+- `search_id` — replay a saved search
 
-Natural language queries against 500M+ people and 50M+ companies.
-
-### Start: POST /search/start-deep-search
+Every start returns a Job. Read its rows from `GET /v1/jobs/{job_id}/items`, or export them to a file.
 
 ```bash
 API_URL="${SIXTYFOUR_API_ENDPOINT:-https://api.sixtyfour.ai}"
+```
 
-curl -X POST "$API_URL/search/start-deep-search" \
+## Natural language search
+
+```bash
+curl -X POST "$API_URL/v1/people/search" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "query": "VP of Engineering at Series B SaaS startups in New York",
-    "mode": "people",
-    "max_results": 500
+    "max_results": 500,
+    "wait_seconds": 0
   }'
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| query | string | yes | — | Natural language description of who/what to find |
-| mode | string | no | "people" | `"people"` or `"company"` |
-| max_results | int | no | 1000 | Result cap |
-| output_mode | string | no | "csv" | `"csv"` or `"query_only"` |
-| exclude_public_ids | string[] | no | — | People-mode: LinkedIn public IDs/profile URLs to drop (max 1000) |
-| exclude_entity_ids | string[] | no | — | Company-mode: numeric company IDs, LinkedIn company URLs/slugs, or exact domains to drop (max 1000) |
-| exclude_list_ids | string[] | no | — | Saved exclusion list IDs to apply as a post-filter (max 5) — see [Exclusion Lists](#exclusion-lists) |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| query | string | — | Natural language description of who/what to find |
+| max_results | int | 10 | Result cap. The fields endpoint reports the allowed maximum |
+| exclude_list_ids | string[] | — | Saved list IDs whose members to drop (max 5) — see [Exclusion Lists](#exclusion-lists) |
+| wait_seconds | int | 5 | Seconds to wait for the Job, 0 to 20 |
+| webhook_url | string | — | HTTPS URL to notify when the Job finishes |
 
-**Response:** `{"task_id": "...", "status": "queued"}`
+For companies, send the same body to `POST /v1/companies/search`.
 
-Max 5 concurrent searches per org. Additional requests get 429.
+**Response:** a Job, e.g. `{"job_id": "job_...", "status": "running", "operation": "people.search", "next_poll_after": 5, ...}`
 
-### Poll: GET /search/status/{task_id}
+### Poll and download
 
 ```bash
-python3 scripts/poll_job.py search TASK_ID --output /tmp/results.csv
+python3 scripts/poll_job.py JOB_ID --output /tmp/results.csv
 ```
 
 Or manually:
 
 ```bash
-curl "$API_URL/search/status/$TASK_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+# Poll until status is succeeded, failed or canceled
+curl "$API_URL/v1/jobs/$JOB_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+
+# Read rows, 1 to 1,000 per page
+curl "$API_URL/v1/jobs/$JOB_ID/items?page_size=100" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
 
-Response fields:
-- `status`: `queued` | `running` | `completed` | `failed`
-- `resource_handle_id`: for CSV download (when completed)
-- `total_results`: result count
-- `progress_message`: human-readable status
-- `iterations`: array of `{iteration, results, elapsed_ms, message}`
-
-Poll every 10-15 seconds. Typical deep searches take 30-120 seconds.
-
-### Download: GET /search/download
-
-```bash
-curl "$API_URL/search/download?resource_handle_id=$RHID" -H "x-api-key: $SIXTYFOUR_API_KEY"
-```
-
-Returns `{"url": "SIGNED_URL"}` — expires in 15 minutes. Download the CSV from the signed URL.
+`items` returns `{"items": [...], "next_cursor": "..."}`. Pass `next_cursor` back as `cursor` until it is null. Natural language searches typically take 30-120 seconds.
 
 
 ## Filter Search
 
-Structured queries with field-level filters, pagination, and export.
-
-### Start: POST /search/start-filter-search
+Structured queries with field-level filters.
 
 ```bash
-curl -X POST "$API_URL/search/start-filter-search" \
+curl -X POST "$API_URL/v1/companies/search" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "mode": "company",
-    "simple_filters": {
+    "filters": {
       "hq_country_iso2": {"$eq": "US"},
       "employees_count": {"$gte": 50, "$lte": 500},
       "industry": {"$in": ["Software", "SaaS"]}
     },
-    "max_results": 1000
+    "max_results": 1000,
+    "wait_seconds": 20
   }'
 ```
 
-Returns `{"task_id": "...", "status": "queued"}` — poll the same way as deep search.
+Returns a Job — read it the same way as a natural language search.
 
-### Simple filter operators
+### Filter operators
 
 | Operator | Description | Example |
 |----------|-------------|---------|
-| `$eq` | Equals | `{"country": {"$eq": "US"}}` |
-| `$ne` | Not equals | `{"status": {"$ne": "inactive"}}` |
-| `$in` | In list | `{"industry": {"$in": ["SaaS", "Fintech"]}}` |
-| `$nin` | Not in list | `{"industry": {"$nin": ["Government"]}}` |
-| `$gt`, `$gte` | Greater than (or equal) | `{"employees_count": {"$gte": 50}}` |
-| `$lt`, `$lte` | Less than (or equal) | `{"employees_count": {"$lte": 500}}` |
-| `$match` | Wildcard match | `{"title": {"$match": "*engineer*"}}` |
-| `$phrase` | Exact phrase | `{"title": {"$phrase": "VP Sales"}}` |
-| `$search` | Full text search | `{"bio": {"$search": "machine learning"}}` |
-| `$exists` | Field exists | `{"email": {"$exists": true}}` |
-| `$and`, `$or`, `$not` | Logical combinators | See below |
+| `$eq`, `$ne` | Equals / not equals | `{"hq_country_iso2": {"$eq": "US"}}` |
+| `$in`, `$nin` | In / not in list (1 to 25 values) | `{"industry": {"$in": ["SaaS", "Fintech"]}}` |
+| `$gt`, `$gte`, `$lt`, `$lte` | Number or date range | `{"employees_count": {"$gte": 50}}` |
+| `$match` | Any word of the value | `{"title": {"$match": "engineer"}}` |
+| `$phrase` | Every word of the value | `{"title": {"$phrase": "VP Sales"}}` |
+| `$exists` | Field present or absent | `{"email": {"$exists": true}}` |
+| `$and`, `$or`, `$nor`, `$not` | Logical combinators | See below |
+| `$elemMatch` | Match nested array elements | Keyed by full field paths |
 
 ### Logical combinators
 
 ```json
 {
   "$or": [
-    {"title": {"$match": "*VP*"}},
-    {"title": {"$match": "*Director*"}}
+    {"title": {"$match": "VP"}},
+    {"title": {"$match": "Director"}}
   ],
   "hq_country_iso2": {"$eq": "US"}
 }
@@ -120,132 +107,96 @@ Returns `{"task_id": "...", "status": "queued"}` — poll the same way as deep s
 
 ```bash
 # What fields can I filter on?
-curl "$API_URL/search/filter-capabilities" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/companies/search/fields" -H "x-api-key: $SIXTYFOUR_API_KEY"
 
 # What are the top values for a specific field?
-curl -X POST "$API_URL/search/filter-field-values" \
+curl -X POST "$API_URL/v1/companies/search/field-values" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"mode": "company", "field": "industry", "top_k": 25}'
+  -d '{"field": "industry", "max_results": 25}'
 ```
 
-Always call `filter-capabilities` first to discover which fields are available and what operators they support. Call `filter-field-values` to see real values before building filters — this avoids typos and shows what the data looks like.
+Use `/v1/people/search/fields` and `/v1/people/search/field-values` for people. Always read `fields` first to discover which fields are available and what operators they support. Call `field-values` to see real values before building filters — this avoids typos and shows what the data looks like.
 
 
 ## Exclusion Lists
 
 Build a reusable suppression list (e.g. "existing customers", "do not contact") and apply it across searches via `exclude_list_ids`.
 
-### Create: POST /search/exclusion-lists
+### Create: POST /v1/lists
 
-Provide exactly one `source`:
+`from` takes exactly one of `ids`, `input_file_id` or `job_id`:
 
 ```bash
-# From inline identifiers (up to 10,000)
-curl -X POST "$API_URL/search/exclusion-lists" \
+# From inline identifiers
+curl -X POST "$API_URL/v1/lists" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "Existing customer companies",
-    "entity_type": "company",
-    "source": {"type": "entity_ids", "entity_ids": ["1441", "linkedin.com/company/openai", "stripe.com"]}
-  }'
+  -d '{"name": "Existing customer companies", "entity_type": "companies", "from": {"ids": ["linkedin.com/company/openai", "stripe.com"]}}'
 
-# From a previous search result
-curl -X POST "$API_URL/search/exclusion-lists" \
+# From a finished search Job
+curl -X POST "$API_URL/v1/lists" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"source": {"type": "search_id", "search_id": "a1b2c3d4-...", "max_results": 250000}}'
+  -d '{"name": "Already contacted", "entity_type": "people", "from": {"job_id": "JOB_ID"}}'
 
-# From an uploaded CSV (resource_handle)
-curl -X POST "$API_URL/search/exclusion-lists" \
+# From an uploaded file (POST /v1/files)
+curl -X POST "$API_URL/v1/lists" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{
-    "name": "Existing customers",
-    "entity_type": "person",
-    "source": {"type": "resource_handle", "resource_handle_id": "8f14e45f-...", "id_column": "linkedin_url"}
-  }'
+  -d '{"name": "Existing customers", "entity_type": "people", "from": {"input_file_id": "FILE_ID"}}'
 ```
 
-- `entity_type`: `"person"` (default) or `"company"` — must match the search mode you'll apply it to.
-- Lists are **immutable** — to change one, create a new list and delete the old. Max 20 active lists per org.
-- Materialization is async: `POST` returns `{"id": "...", "status": "pending"}` immediately. Poll `GET /search/exclusion-lists/{id}` until `status` is `"ready"` before using it.
+- `entity_type`: `"people"` or `"companies"` — must match the search you apply it to.
+- Building is async: the response is `{"list_id": "list_...", "job_id": "job_...", "status": "building"}`. Poll the Job (or `GET /v1/lists/{list_id}`) until the list is ready before using it.
+- To change a list, create a new one and delete the old.
 
 ### List / get / delete
 
 ```bash
-curl "$API_URL/search/exclusion-lists" -H "x-api-key: $SIXTYFOUR_API_KEY"
-curl "$API_URL/search/exclusion-lists/$LIST_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
-curl -X DELETE "$API_URL/search/exclusion-lists/$LIST_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/lists" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/lists/$LIST_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl "$API_URL/v1/lists/$LIST_ID/rows" -H "x-api-key: $SIXTYFOUR_API_KEY"
+curl -X DELETE "$API_URL/v1/lists/$LIST_ID" -H "x-api-key: $SIXTYFOUR_API_KEY"
 ```
-
-Status values: `pending | materializing | ready | failed`. `size` shows unique member count once ready.
 
 ### Applying a list
 
-Pass the list ID(s) in `exclude_list_ids` on `/search/start-deep-search`, `/search/query`, or `/search/export` (max 5 per request, entity type must match search mode):
+Pass the list ID(s) in `exclude_list_ids` on a search (max 5 per request):
 
 ```json
-{"query": "VP Sales at Series B SaaS companies", "mode": "people", "exclude_list_ids": ["LIST_ID"]}
+{"query": "VP Sales at Series B SaaS companies", "exclude_list_ids": ["LIST_ID"]}
 ```
-
-
-## Unified Search Query
-
-### POST /search/query
-
-Replaces `/search/start-filter-search` for structured queries — prefer this for new integrations. Key differences:
-
-- **Synchronous** — returns results directly, no polling needed.
-- **Cursor-based pagination** built in.
-- Native `exclude_public_ids` / `exclude_entity_ids` / `exclude_list_ids` support.
-- Accepts one of: `simple_filters` (MongoDB-style), `filters` (raw OpenSearch DSL), `parsed_query` (replay a previous structured query), or `search_id` (replay a saved search).
-
-```bash
-curl -X POST "$API_URL/search/query" \
-  -H "x-api-key: $SIXTYFOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "mode": "company",
-    "simple_filters": {
-      "hq_country_iso2": {"$eq": "US"},
-      "employees_count": {"$gte": 50, "$lte": 500}
-    },
-    "page_size": 50,
-    "max_results": 1000,
-    "exclude_list_ids": ["LIST_ID"]
-  }'
-```
-
-**Response:** `{"search_id": "...", "csv_download_url": "...", "json_download_url": "...", "next_cursor": "...", "has_more": true, ...}`
-
-To page: send `{"cursor": "<next_cursor>"}` alone — no need to repeat filters. Rely on `has_more`/`next_cursor`, not page fullness (pages can be smaller than `page_size` when exclusions are active).
-
-People-mode also accepts a natural-language `query` field (mutually exclusive with filter sources) — same idea as deep search but synchronous and paginated.
 
 
 ## Exporting search results
 
-### POST /search/export
+### POST /v1/exports
 
-Export a previous search to CSV:
+Export a finished Job's rows (or a ready list) to CSV, JSON or NDJSON:
 
 ```bash
-curl -X POST "$API_URL/search/export" \
+EXPORT_JOB_ID=$(curl -sS -X POST "$API_URL/v1/exports" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"search_id": "SEARCH_ID", "mode": "people", "max_results": 5000}'
+  -d '{"from": {"job_id": "JOB_ID"}, "format": "csv"}' | jq -r .job_id)
 ```
 
-Returns `{"task_id": "...", "status": "running"}` — poll with `/search/status/{task_id}`.
+The export is its own Job. Poll it; when it is `succeeded`, read the file ID from `result.output_file_id`, then download:
+
+```bash
+FILE_ID=$(curl -sS "$API_URL/v1/jobs/$EXPORT_JOB_ID" -H "x-api-key: $SIXTYFOUR_API_KEY" | jq -r .result.output_file_id)
+URL=$(curl -sS "$API_URL/v1/files/$FILE_ID" -H "x-api-key: $SIXTYFOUR_API_KEY" | jq -r .download_url)
+curl -sS "$URL" -H "x-api-key: $SIXTYFOUR_API_KEY" -o results.csv
+```
+
+`download_url` is valid for 15 minutes; read the file again to refresh it. `python3 scripts/poll_job.py JOB_ID --output results.csv` does all of this.
 
 
 ## Tips
 
-- Deep search is best for natural language queries where you'd describe the people/companies in plain English
-- For structured filter queries, prefer `/search/query` (synchronous, cursor pagination, native exclusions) over the older `/search/start-filter-search`
-- Use `filter-capabilities` and `filter-field-values` before building filter queries
-- Build an exclusion list once (existing customers, do-not-contact) and reuse via `exclude_list_ids` instead of re-pasting inline IDs on every search
-- Max 5000 results per export
-- Max 5 concurrent deep searches per org
+- Use `query` when you'd describe the people/companies in plain English; use `filters` for exact criteria
+- Read `fields` and `field-values` before building filter queries
+- Build an exclusion list once (existing customers, do-not-contact) and reuse via `exclude_list_ids`
+- An export holds up to 100,000 rows or 100 MB
+- Replay a saved search with `{"search_id": "SEARCH_ID", "max_results": 10}`; it starts a new Job

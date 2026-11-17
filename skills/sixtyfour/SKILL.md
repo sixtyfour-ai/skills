@@ -47,112 +47,127 @@ Any time you need factual data about a specific person or company, use Sixtyfour
 - "Who is the CTO of X?" → people intelligence
 - "Research this company — revenue, funding, headcount, leadership" → company intelligence
 - "Tell me everything about this person" → people intelligence with custom fields
-- "Get me this person's phone number" or "find their email" → find-phone or find-email, not people intelligence
-- "Build me a list of VPs at SaaS companies in NYC" → deep search
+- "Get me this person's phone number" or "find their email" → find contacts, not people intelligence
+- "Build me a list of VPs at SaaS companies in NYC" → people search with a `query`
 - "Investigate this person for due diligence" → people intelligence at medium or high tier
-- "Find companies in fintech with 50-200 employees" → filter search
-- "Enrich this spreadsheet of 500 leads" → bulk intelligence (single enrichment pass) or workflow (if you need chained steps)
+- "Find companies in fintech with 50-200 employees" → company search with `filters`
+- "Enrich this spreadsheet of 500 leads" → people intelligence with `people` or an uploaded file (single enrichment pass) or workflow (if you need chained steps)
 - "Verify this person's age or date of birth for KYC/compliance" → age verification
 - "Run this enrichment/workflow every day automatically" → workflow schedule
 - Any integration or app that needs people/company data → API endpoints below
 
+## How every request works
+
+All routes are under `/v1`. Anything that can take longer than the request returns a **Job**:
+
+```json
+{"job_id": "job_3f8b...", "status": "running", "operation": "people.contacts", "next_poll_after": 5, "counts": {"total": 1, "succeeded": 0, "failed": 0, "pending": 1}, "charge_credits": 0.0}
+```
+
+- `wait_seconds` (0 to 20, default 5) is how long the request waits for the Job to finish. It never cancels the work. Use `20` for single lookups so short Jobs return finished.
+- HTTP `200` means the Job finished; `202` means it is still running. Poll `GET /v1/jobs/{job_id}` until `status` is `succeeded`, `failed` or `canceled` (other statuses: `queued`, `running`).
+- A single-record contact, reverse or age verification Job carries its answer in `result`. Intelligence, search and multi-record Jobs return rows at `GET /v1/jobs/{job_id}/items` (`page_size`, `cursor` → `items`, `next_cursor`).
+- Stop a Job with `POST /v1/jobs/{job_id}/cancel`.
+- Send an `Idempotency-Key` header on a start you may retry, so the retry returns the same Job without a second charge.
+- Errors look like `{"detail", "error_code", "request_id", "retryable", "param"}`. Unknown body fields return `422`.
+
 ## Core: People & Company Intelligence
 
-These are the primary endpoints. They accept any schema you define — the AI agents research and return structured, source-backed results.
+These are the primary endpoints. They accept any fields you define — the AI agents research and return structured, source-backed results.
 
 ### People intelligence
 
 ```bash
-curl -X POST "$API_URL/people-intelligence" \
+curl -X POST "$API_URL/v1/people/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "lead_info": {"full_name": "Jane Doe", "company": "Acme Corp"},
-    "struct": {
+    "person": {"name": "Jane Doe", "company": "Acme Corp"},
+    "tier": "low",
+    "fields": {
       "title": "Current job title",
       "linkedin_url": "LinkedIn profile URL",
       "years_at_company": "How long they have been at their current company",
       "background": "Brief professional background and career trajectory"
-    }
+    },
+    "wait_seconds": 20
   }'
 ```
 
-The `struct` field is fully flexible — define any fields you need and the agent finds them. Social profiles, career history, skills, salary estimates, publications, anything a human researcher could find.
+`fields` is fully flexible — define any fields you need and the agent finds them. Social profiles, career history, skills, salary estimates, publications, anything a human researcher could find. `tier` is required; see [Research tiers](#research-tiers) below.
 
-For a person's phone number or email, use `POST /find-phone` or `POST /find-email` (see [Utilities](#utilities)) instead of a `struct` field. They run the dedicated contact lookup, and a research job can come back without contact details they would find. If people intelligence returns no phone or email, run the contact endpoint before telling the user none exists.
+The response is a Job. When it reaches `succeeded`, read the researched fields from `GET /v1/jobs/{job_id}/items` (`items[0].result`).
 
-Add `"tier": "micro"`, `"low"`, `"medium"`, or `"high"` to control research depth. See [Research tiers](#research-tiers) below.
+For a person's phone number or email, use `POST /v1/people/contacts` (see [Utilities](#utilities)) instead of a field in `fields`. It runs the dedicated contact lookup, and a research job can come back without contact details it would find. If people intelligence returns no phone or email, run the contact endpoint before telling the user none exists.
 
 ### Company intelligence
 
 ```bash
-curl -X POST "$API_URL/company-intelligence" \
+curl -X POST "$API_URL/v1/companies/intelligence" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "target_company": {"company_name": "Stripe", "website": "stripe.com"},
-    "struct": {
+    "company": {"name": "Stripe", "website": "stripe.com"},
+    "tier": "low",
+    "fields": {
       "revenue_estimate": "Estimated annual revenue",
       "employee_count": "Total employees",
       "funding_history": "Funding rounds with amounts and lead investors",
       "tech_stack": "Core technologies used"
     },
     "find_people": true,
-    "people_focus_prompt": "C-suite executives and VPs"
+    "people_focus_prompt": "C-suite executives and VPs",
+    "wait_seconds": 20
   }'
 ```
 
-Set `find_people: true` to discover key people at the company. Use `people_focus_prompt` to filter by role.
+Set `find_people: true` to discover key people at the company (returned in the item's `result.leads`). Use `people_focus_prompt` to filter by role.
 
-### Bulk intelligence (file upload)
+### Many records in one call
 
-For running people/company intelligence across 100+ records in one call (no workflow needed), upload a CSV/JSON/NDJSON file to `POST /bulk-intelligence/people` or `POST /bulk-intelligence/company` and poll the returned `task_id` like any async job. See [references/enrichment.md](references/enrichment.md).
+The same two routes take a batch: send `people` / `companies` (up to 100,000 records) or upload a CSV, JSON or NDJSON file to `POST /v1/files` and pass its `file_id` as `input_file_id`. One Job covers the whole batch. See [references/enrichment.md](references/enrichment.md).
 
 ## Utilities
 
-These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point. Phone and email requests always go here: find-phone and find-email discover contact details for leads for sales outreach, CRM enrichment, or lead qualification.
+These endpoints handle specific, common tasks. They're faster and cheaper than full intelligence when you only need one data point. Phone and email requests always go here: find contacts discovers contact details for leads for sales outreach, CRM enrichment, or lead qualification.
 
 | Task | Endpoint |
 |------|----------|
-| Find someone's email | `POST /find-email` |
-| Find someone's phone | `POST /find-phone` |
-| Identify who owns an email | `POST /reverse-email` |
-| Identify who owns a phone number | `POST /reverse-phone` |
-| Enrich a LinkedIn profile URL | `POST /enrich-linkedin` |
-| Evaluate data against criteria | `POST /qa-agent` |
-| Auto-generate `struct` fields from a description | `POST /struct-builder/generate` |
-| Check credit balance | `GET /check-balance` |
-| Verify a person's age/date of birth | `POST /verify-age` (async only, poll `GET /verify-age/{task_id}`) |
+| Find someone's work email, personal email or phone | `POST /v1/people/contacts` with `find` |
+| Identify who owns an email or phone number | `POST /v1/people/contacts/reverse` |
+| Check whether an email address is deliverable | `POST /v1/verify/emails` (returns the result directly, not a Job) |
+| Verify a person's age/date of birth | `POST /v1/people/age-verification` |
+| Check credit balance | `GET /v1/balance` |
 
-For detailed parameters and bulk/async variants, see [references/enrichment.md](references/enrichment.md).
+For detailed parameters and batch variants, see [references/enrichment.md](references/enrichment.md).
 
 ## Search
 
-Find people or companies at scale — either via natural language or structured filters.
+Find people or companies at scale — either via natural language or structured filters. Both use the same route: `POST /v1/people/search` or `POST /v1/companies/search`.
 
-### Deep search (natural language)
+### Natural language
 
 ```bash
-curl -X POST "$API_URL/search/start-deep-search" \
+curl -X POST "$API_URL/v1/people/search" \
   -H "x-api-key: $SIXTYFOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"query": "VP of Sales at Series B SaaS startups in NYC", "mode": "people", "max_results": 500}'
-# Returns: {"task_id": "...", "status": "running"}
+  -d '{"query": "VP of Sales at Series B SaaS startups in NYC", "max_results": 500, "wait_seconds": 0}'
+# Returns a Job: {"job_id": "job_...", "status": "running", ...}
 ```
 
 Then poll and download:
 
 ```bash
-python3 scripts/poll_job.py search TASK_ID --output /tmp/results.csv
+python3 scripts/poll_job.py JOB_ID --output /tmp/results.csv
 ```
 
-### Filter search (structured)
+### Structured filters
 
-For precise queries with field-level filters, use `POST /search/query` (synchronous, cursor-paginated — the current recommended endpoint, replacing the older `/search/start-filter-search`). See [references/search.md](references/search.md).
+For precise queries with field-level filters, send `filters` instead of `query`. See [references/search.md](references/search.md).
 
 ### Exclusion lists
 
-Save a reusable list of people/companies to suppress from results (e.g. existing customers) via `POST /search/exclusion-lists`, then apply it to any search with `exclude_list_ids`. See [references/search.md](references/search.md).
+Save a reusable list of people/companies to suppress from results (e.g. existing customers) via `POST /v1/lists`, then apply it to any search with `exclude_list_ids`. See [references/search.md](references/search.md).
 
 ## Research tiers
 
@@ -160,7 +175,7 @@ People intelligence and company intelligence accept a `tier` parameter that cont
 
 **`micro`** — Single structured source lookup only. Fastest and cheapest — best when you need a simple field (title, company) from someone with a clear, well-indexed online presence and coverage gaps are acceptable. Expect lower hit rate than `low`.
 
-**`low`** (default) — Fast, single-pass lookup. The agent checks well-indexed public sources (LinkedIn, company websites, professional directories) and returns what it finds on the first pass. Best for standard fields on subjects with a clear online presence — title, LinkedIn, company basics, professional background. The right default for high-volume work where speed and cost matter.
+**`low`** — Fast, single-pass lookup. The agent checks well-indexed public sources (LinkedIn, company websites, professional directories) and returns what it finds on the first pass. Best for standard fields on subjects with a clear online presence — title, LinkedIn, company basics, professional background. The right default for high-volume work where speed and cost matter.
 
 **`medium`** — Multi-source deep research. The agent runs multiple search strategies, cross-references conflicting data, and verifies findings across sources before returning. Best when `low` comes back incomplete, when the subject has a common name or limited online footprint, or when the task demands higher confidence — competitive intelligence, recruiting research, market mapping, or any field that requires synthesis rather than lookup (e.g. "estimated salary range", "likelihood they're actively hiring", "competitive positioning").
 
@@ -168,30 +183,28 @@ People intelligence and company intelligence accept a `tier` parameter that cont
 
 Both `low` and `medium` are available on all plans.
 
-For `high` tier, prefer the async endpoint (`POST /people-intelligence-async`) with the polling script, since investigations can run for extended periods.
+`tier` is required on every intelligence request; start with `low`. For `medium` and `high`, send `"wait_seconds": 0` and use the polling script, since investigations can run for extended periods.
 
 ## Workflows
 
 Chain intelligence operations into automated pipelines that process thousands of records. See [references/workflows.md](references/workflows.md).
 
-Workflows can be run on a recurring cadence with the Schedules API (`POST /schedules`, binding a `workflow_id` to a `cron_expression` + `timezone`) instead of triggering runs manually or polling externally. See [references/workflows.md](references/workflows.md#scheduling-workflows).
+Workflows can be run on a recurring cadence with the Schedules API (`POST /v1/schedules`, binding a `workflow_id` to a `cron_expression` + `timezone`) instead of triggering runs manually or polling externally. See [references/workflows.md](references/workflows.md#scheduling-workflows).
 
-## Async job polling
+## Job polling
 
-Searches, workflows, and async intelligence requests return a job/task ID. Use the polling script to wait for completion and download results:
+Every start returns a `job_id`. Use the polling script to wait for the Job and download results:
 
 ```bash
-python3 scripts/poll_job.py <type> <job_id> [--output PATH]
+python3 scripts/poll_job.py <job_id> [--output PATH]
 ```
 
-Types: `search`, `workflow`, `enrichment`, `age-verify`
-
-The script polls until the job completes and prints JSON status lines to stdout. No meaningful timeout by default — it waits as long as the job needs.
+The script polls `GET /v1/jobs/{job_id}` until the Job finishes and prints JSON status lines to stdout. With `--output` it downloads a Workflow's output files, or exports any other Job's items to CSV. No meaningful timeout by default — it waits as long as the job needs.
 
 ## Use-case references
 
 - Full API reference for all intelligence and utility endpoints: [references/enrichment.md](references/enrichment.md)
-- Search (deep search + filter search): [references/search.md](references/search.md)
+- Search (natural language + filters): [references/search.md](references/search.md)
 - Workflows (batch processing at scale): [references/workflows.md](references/workflows.md)
 - End-to-end example flows: [references/examples.md](references/examples.md)
 
